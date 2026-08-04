@@ -1,0 +1,122 @@
+# CD — deploy and install Greenlight on a Twenty instance.
+#
+# The scaffold shipped this as an automatic push-to-main deploy pointed at
+# `http://localhost:2020`. On a GitHub-hosted runner that address is the
+# runner's own loopback, where nothing is listening, so every run would have
+# failed — and the secret it reads, TWENTY_DEPLOY_API_KEY, has never been set.
+#
+# There is currently no deploy target this workflow may legitimately reach:
+# the only live instance is off-limits to automation, and the development
+# instance runs on a workstation that GitHub cannot route to. So the automatic
+# trigger is gone and the target is now an explicit input. The workflow keeps
+# the scaffold's shape — publish to the server registry, then install — so that
+# turning it on later is a matter of supplying a URL and a key, not rewriting
+# the file.
+#
+# To enable it:
+#   1. Stand up a Twenty instance reachable from GitHub Actions.
+#   2. Mint a scoped API key on that instance's Integration role and store it as
+#      the repository secret TWENTY_DEPLOY_API_KEY. Never reuse an admin key.
+#   3. Set the repository variable PROTECTED_DEPLOY_HOSTS to a comma-separated
+#      list of hostnames this workflow must never deploy to — your production
+#      CRM, at minimum. The guard below fails closed if it is unset, so a
+#      forgotten variable stops the run rather than silently allowing anything.
+#   4. Run this workflow from the Actions tab with `api-url` set.
+#   5. Only then consider re-adding a push trigger — and read the note about
+#      version numbers below before you do.
+#
+# Version numbers matter here. `app:publish --private` uploads to the server's
+# own application registry, which rejects anything that is not strictly higher
+# than the version already deployed:
+#
+#   Cannot deploy <uuid>@0.1.0: version must be higher than the currently
+#   deployed version 0.1.1. Please bump the version in package.json.
+#
+# That is observed behaviour, not a guess. A deploy-on-every-push trigger would
+# therefore fail on the second push unless `app/package.json` is bumped in every
+# commit. Uninstalling the app does not reset it either. Any future automatic CD
+# needs a version-bump step, not just a trigger.
+name: CD
+
+on:
+  workflow_dispatch:
+    inputs:
+      api-url:
+        description: 'Base URL of the target Twenty instance. Must not be a production workspace you are not prepared to change.'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cd-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  deploy-and-install:
+    name: Publish and install
+    runs-on: ubuntu-latest
+    steps:
+      - name: Refuse to touch a protected instance
+        env:
+          API_URL: ${{ inputs.api-url }}
+          PROTECTED_HOSTS: ${{ vars.PROTECTED_DEPLOY_HOSTS }}
+        run: |
+          # Greenlight's standing constraint: automation never touches a
+          # production CRM. This is here so a mistyped dispatch cannot do it
+          # either. The list lives in a repository variable rather than in this
+          # file so that a public repo does not advertise the hostnames it is
+          # defending.
+          #
+          # Fail closed. An empty list is not "nothing to protect", it is "the
+          # guard was never configured", and the two must not look the same.
+          if [ -z "$PROTECTED_HOSTS" ]; then
+            echo "::error::PROTECTED_DEPLOY_HOSTS is not set. See the header of this file."
+            exit 1
+          fi
+
+          echo "$PROTECTED_HOSTS" | tr ',' '\n' | while read -r host; do
+            host="$(echo "$host" | tr -d '[:space:]')"
+            [ -z "$host" ] && continue
+            case "$API_URL" in
+              *"$host"*)
+                echo "::error::Refusing to deploy to a protected instance."
+                exit 1
+                ;;
+            esac
+          done || exit 1
+
+          echo "Target accepted."
+
+      - name: Require a deploy key
+        env:
+          DEPLOY_KEY: ${{ secrets.TWENTY_DEPLOY_API_KEY }}
+        run: |
+          if [ -z "$DEPLOY_KEY" ]; then
+            echo "::error::TWENTY_DEPLOY_API_KEY is not set. See the header of this file."
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Publish to the server registry
+        uses: twentyhq/twenty/.github/actions/deploy-twenty-app@main
+        with:
+          api-url: ${{ inputs.api-url }}
+          api-key: ${{ secrets.TWENTY_DEPLOY_API_KEY }}
+          app-path: app
+
+      - name: Install
+        uses: twentyhq/twenty/.github/actions/install-twenty-app@main
+        with:
+          api-url: ${{ inputs.api-url }}
+          api-key: ${{ secrets.TWENTY_DEPLOY_API_KEY }}
+          app-path: app
+
+      - name: Assert the post-install hook ran
+        env:
+          TWENTY_API_URL: ${{ inputs.api-url }}
+          TWENTY_API_KEY: ${{ secrets.TWENTY_DEPLOY_API_KEY }}
+        run: node .github/scripts/assert-install-hook.mjs

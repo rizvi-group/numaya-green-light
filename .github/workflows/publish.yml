@@ -1,0 +1,98 @@
+# Publish @numaya/greenlight to npm with provenance (npm trusted publishing).
+#
+# This workflow is deliberately INERT. It cannot run on a tag push, it has no
+# npm credential wired to it, and it fails fast with an explanation rather than
+# attempting a publish that cannot succeed. Publishing Greenlight is a product
+# decision — licence choice and repository visibility are both still open — and
+# it should not happen because someone pushed a tag.
+#
+# ── Why it cannot work today ──────────────────────────────────────────────────
+#
+# npm provenance is issued from a GitHub OIDC token, and npm refuses to issue it
+# for a private source repository:
+#
+#   E422 Unprocessable Entity - PUT https://registry.npmjs.org/@numaya%2fgreenlight
+#   Unsupported GitHub Actions source repository visibility: "private"
+#
+# rizvi-group/numaya-green-light is private. The scaffold anticipated this and
+# left a commented-out `TWENTY_APP_PUBLISH_DISABLE_PROVENANCE: 'true'` hint,
+# which would publish without provenance. That escape hatch is left commented
+# out on purpose: provenance is also how ownership of an app is claimed in a
+# Twenty marketplace — the claim flow verifies the GitHub account or
+# organisation the provenance points at — so publishing without it forfeits the
+# claim. Going public is the right fix, not disabling provenance.
+#
+# ── What has to change before this can publish ────────────────────────────────
+#
+#  1. Make rizvi-group/numaya-green-light public. HANDOFF.md already lists the
+#     source-available licence choice as an open decision blocking exactly this;
+#     app/package.json currently declares Elastic-2.0.
+#  2. On npmjs.com, open @numaya/greenlight → Settings → Trusted Publisher and
+#     register this repository and this workflow file (publish.yml).
+#     See https://docs.npmjs.com/trusted-publishers
+#  3. Delete the `Refuse to publish from a private repository` step below.
+#  4. Re-add the tag trigger if you want tags to publish:
+#         on:
+#           push:
+#             tags:
+#               - 'v*'
+#  5. Bump the version in app/package.json. npm rejects a republished version,
+#     and so does Twenty's own server registry.
+#
+# No npm token is needed at any point: trusted publishing is OIDC-based, which
+# is why `id-token: write` is the only extra permission here. Do not add
+# NODE_AUTH_TOKEN or an .npmrc credential to this file.
+name: Publish
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  # Required for npm trusted publishing (OIDC provenance).
+  id-token: write
+
+jobs:
+  publish:
+    name: Publish to npm
+    runs-on: ubuntu-latest
+    steps:
+      - name: Refuse to publish from a private repository
+        run: |
+          # Delete this step only after step 1 and step 2 of the header are done.
+          echo "::error::Publishing is disabled. ${{ github.repository }} is ${{ github.event.repository.visibility }};"
+          echo "::error::npm rejects OIDC provenance from a private repository (E422)."
+          echo "::error::See the header of .github/workflows/publish.yml for what has to change."
+          exit 1
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Enable Corepack
+        # The scaffold omitted this and then called `yarn install`, which would
+        # have failed on a runner with no yarn on PATH.
+        run: corepack enable
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: app/.nvmrc
+          cache: yarn
+          cache-dependency-path: app/yarn.lock
+          registry-url: https://registry.npmjs.org
+
+      - name: Update npm
+        # Trusted publishing requires npm 11.5.1 or later.
+        run: npm install -g npm@latest
+
+      - name: Install dependencies
+        working-directory: app
+        run: yarn install --immutable
+
+      - name: Publish to npm
+        working-directory: app
+        # Publishing from a private source repo would need
+        #   env:
+        #     TWENTY_APP_PUBLISH_DISABLE_PROVENANCE: 'true'
+        # which forfeits the marketplace ownership claim. Read the header first.
+        run: yarn twenty app:publish

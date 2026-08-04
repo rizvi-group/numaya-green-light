@@ -1,0 +1,281 @@
+# CI — the gate this project actually relies on.
+#
+# `create-twenty-app` scaffolded this file into `app/.github/workflows/`, because
+# it assumed the app was the repository root. It is not: the app lives in `app/`
+# and the Playwright suite in `e2e/`. GitHub only reads `.github/workflows/` at
+# the repository root, so the scaffolded copy never registered and no run ever
+# happened. Everything below is the scaffold's intent, re-pathed for the
+# subdirectory layout and extended to cover the checks the dev loop depends on.
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request: {}
+
+permissions:
+  contents: read
+
+env:
+  TWENTY_VERSION: latest
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Everything that needs no Twenty server. Kept separate so a server-side
+  # outage cannot mask a lint or type regression.
+  static:
+    name: Lint, typecheck, unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: app/.nvmrc
+          cache: yarn
+          cache-dependency-path: app/yarn.lock
+
+      - name: Install dependencies
+        working-directory: app
+        run: yarn install --immutable
+
+      - name: Lint
+        working-directory: app
+        run: yarn lint
+
+      - name: Typecheck
+        working-directory: app
+        run: yarn typecheck
+
+      - name: Unit tests
+        working-directory: app
+        run: |
+          set -o pipefail
+          yarn test:unit 2>&1 | tee "${GITHUB_WORKSPACE}/unit-test.log"
+
+      # A workflow that is green because it did nothing is worse than no
+      # workflow. Read the count back out of vitest's own summary and refuse a
+      # run that quietly executed fewer tests than the recorded baseline.
+      - name: Assert the unit suite actually ran
+        env:
+          UNIT_TEST_BASELINE: '1006'
+        run: |
+          summary=$(sed -e 's/\x1b\[[0-9;]*m//g' "${GITHUB_WORKSPACE}/unit-test.log" \
+            | grep -oE 'Tests[[:space:]]+[0-9]+ passed' | tail -1)
+
+          if [ -z "$summary" ]; then
+            echo "::error::vitest printed no 'Tests N passed' summary — the suite did not run."
+            exit 1
+          fi
+
+          passed=$(echo "$summary" | grep -oE '[0-9]+')
+          echo "vitest reported: $summary"
+
+          if [ "$passed" -lt "$UNIT_TEST_BASELINE" ]; then
+            echo "::error::only $passed unit tests ran; the baseline is $UNIT_TEST_BASELINE."
+            echo "::error::If tests were deliberately removed, lower UNIT_TEST_BASELINE in the same commit."
+            exit 1
+          fi
+
+          echo "$passed unit tests passed (baseline $UNIT_TEST_BASELINE)."
+
+  # Everything that needs a live Twenty server: the SDK build, the integration
+  # suite, and — the part that had never been exercised anywhere — a real
+  # `app:publish --private` followed by a real `app:install`, with the
+  # post-install hook's own side effects asserted afterwards.
+  app:
+    name: Build, integration tests, real install
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Spawn Twenty test instance
+        id: twenty
+        uses: twentyhq/twenty/.github/actions/spawn-twenty-app-dev-test@main
+        with:
+          twenty-version: ${{ env.TWENTY_VERSION }}
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: app/.nvmrc
+          cache: yarn
+          cache-dependency-path: app/yarn.lock
+
+      - name: Install dependencies
+        working-directory: app
+        run: yarn install --immutable
+
+      # `dev:build` generates the typed API client from the active remote, so it
+      # needs a configured remote — the same one the integration suite uses.
+      - name: Configure the CLI remote
+        env:
+          API_URL: ${{ steps.twenty.outputs.server-url }}
+          API_KEY: ${{ steps.twenty.outputs.api-key }}
+        run: |
+          mkdir -p ~/.twenty
+          node -e "
+            const fs = require('fs'), path = require('path'), os = require('os');
+            fs.writeFileSync(path.join(os.homedir(), '.twenty', 'config.json'), JSON.stringify({
+              version: 1,
+              defaultRemote: 'target',
+              remotes: { target: { apiUrl: process.env.API_URL, apiKey: process.env.API_KEY, accessToken: process.env.API_KEY } }
+            }, null, 2));
+          "
+
+      - name: Build (npx twenty dev:build)
+        working-directory: app
+        run: yarn twenty dev:build
+
+      - name: Integration tests
+        working-directory: app
+        env:
+          TWENTY_API_URL: ${{ steps.twenty.outputs.server-url }}
+          TWENTY_API_KEY: ${{ steps.twenty.outputs.api-key }}
+        run: yarn test
+
+      # `app:publish --private` uploads a tarball to the *server* registry, not
+      # to npm. A CI runner gets a virgin instance every time, so the registry's
+      # "version must be higher than the currently deployed version" rule can
+      # never bite here the way it does on a long-lived dev container.
+      - name: Publish to the server registry
+        uses: twentyhq/twenty/.github/actions/deploy-twenty-app@main
+        with:
+          api-url: ${{ steps.twenty.outputs.server-url }}
+          api-key: ${{ steps.twenty.outputs.api-key }}
+          app-path: app
+
+      - name: Install the app
+        uses: twentyhq/twenty/.github/actions/install-twenty-app@main
+        with:
+          api-url: ${{ steps.twenty.outputs.server-url }}
+          api-key: ${{ steps.twenty.outputs.api-key }}
+          app-path: app
+
+      # The install hook runs asynchronously with retries, so this polls for its
+      # side effects rather than assuming they landed. It is the difference
+      # between "the install command exited 0" and "the app actually installed".
+      - name: Assert the post-install hook ran
+        env:
+          TWENTY_API_URL: ${{ steps.twenty.outputs.server-url }}
+          TWENTY_API_KEY: ${{ steps.twenty.outputs.api-key }}
+        run: node .github/scripts/assert-install-hook.mjs
+
+      - name: Twenty server logs
+        if: failure()
+        run: docker logs twenty-app-dev-test 2>&1 | tail -200
+
+  # Playwright drives the real Twenty UI, so it needs a server that serves the
+  # front end *and* the pre-filled sign-in flow the suite depends on. The
+  # upstream spawn action does not set SIGN_IN_PREFILLED, so this job starts its
+  # own container from the same image with that one extra variable. Everything
+  # else mirrors the upstream action, including the port and the rate limits.
+  e2e:
+    name: Playwright against the real Twenty UI
+    runs-on: ubuntu-latest
+    env:
+      TWENTY_E2E_URL: http://localhost:2021
+      # Public fixture key baked into twentycrm/twenty-app-dev's seeded demo
+      # workspace. It is the same value twentyhq/twenty publishes as an output
+      # of its own spawn action and the same one app/vitest.config.ts already
+      # falls back to. It opens nothing but a throwaway container.
+      TWENTY_E2E_API_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIyMDIwMjAyMC0xYzI1LTRkMDItYmYyNS02YWVjY2Y3ZWE0MTkiLCJ0eXBlIjoiQVBJX0tFWSIsIndvcmtzcGFjZUlkIjoiMjAyMDIwMjAtMWMyNS00ZDAyLWJmMjUtNmFlY2NmN2VhNDE5IiwiaWF0IjoxNzM1Njg5NjAwLCJleHAiOjQ4OTE0NDk2MDAsImp0aSI6IjIwMjAyMDIwLWY0MDEtNGQ4YS1hNzMxLTY0ZDAwN2MyN2JhZCJ9.bfQjfyN0NEtTCLE_xPyNcwonDzlSXFoP8kdCQTdnuDc
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Start Twenty with the pre-filled sign-in flow
+        run: |
+          docker run -d \
+            --name twenty-app-dev-test \
+            -p 2021:2021 \
+            -e NODE_PORT=2021 \
+            -e SERVER_URL=http://localhost:2021 \
+            -e SIGN_IN_PREFILLED=true \
+            -e MARKETPLACE_CATALOG_SYNC_CRON_ENABLED=false \
+            -e API_RATE_LIMITING_SHORT_LIMIT=100000 \
+            -e API_RATE_LIMITING_LONG_LIMIT=100000 \
+            twentycrm/twenty-app-dev:${{ env.TWENTY_VERSION }}
+
+          echo "Waiting for Twenty to become healthy…"
+          for i in $(seq 1 80); do
+            if curl -sf http://localhost:2021/healthz > /dev/null 2>&1; then
+              echo "Twenty is ready after ~$((i * 3))s"
+              exit 0
+            fi
+            sleep 3
+          done
+          echo "::error::Twenty did not become healthy in 240s"
+          docker logs twenty-app-dev-test 2>&1 | tail -100
+          exit 1
+
+      - name: Publish to the server registry
+        uses: twentyhq/twenty/.github/actions/deploy-twenty-app@main
+        with:
+          api-url: ${{ env.TWENTY_E2E_URL }}
+          api-key: ${{ env.TWENTY_E2E_API_KEY }}
+          app-path: app
+
+      - name: Install the app
+        uses: twentyhq/twenty/.github/actions/install-twenty-app@main
+        with:
+          api-url: ${{ env.TWENTY_E2E_URL }}
+          api-key: ${{ env.TWENTY_E2E_API_KEY }}
+          app-path: app
+
+      - name: Assert the post-install hook ran
+        env:
+          TWENTY_API_URL: ${{ env.TWENTY_E2E_URL }}
+          TWENTY_API_KEY: ${{ env.TWENTY_E2E_API_KEY }}
+        run: node .github/scripts/assert-install-hook.mjs
+
+      # e2e/ is a deliberate sibling of app/ with its own npm lockfile, so it
+      # gets its own install rather than sharing the app's yarn workspace.
+      - name: Setup Node.js for the e2e suite
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: app/.nvmrc
+          cache: npm
+          cache-dependency-path: e2e/package-lock.json
+
+      - name: Install e2e dependencies
+        working-directory: e2e
+        run: npm ci
+
+      - name: Install Playwright browsers
+        working-directory: e2e
+        run: npx playwright install --with-deps chromium
+
+      - name: Playwright
+        working-directory: e2e
+        env:
+          GREENLIGHT_E2E_BASE_URL: ${{ env.TWENTY_E2E_URL }}
+        run: npx playwright test
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            e2e/playwright-report
+            e2e/test-results
+          retention-days: 7
+          if-no-files-found: ignore
+
+      - name: Twenty server logs
+        if: failure()
+        run: docker logs twenty-app-dev-test 2>&1 | tail -200
