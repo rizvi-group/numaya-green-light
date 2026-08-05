@@ -53,6 +53,8 @@ export type PersonInput = {
   name: { firstName: string; lastName: string };
   emails?: { primaryEmail: string };
   jobTitle?: string;
+  /** Links the lead to a Company. Enrichment searches on the employer's name. */
+  companyId?: string;
 };
 
 export type ScoredPerson = {
@@ -158,6 +160,90 @@ export const deletePerson = async (id: string): Promise<void> => {
   await call('graphql', `mutation Del($id: UUID!) { deletePerson(id: $id) { id } }`, {
     id,
   });
+};
+
+/**
+ * Enrichment searches on the *employer's* name, so a lead with no company is a
+ * lead with nothing to look up — `planEnrichment` returns `no_identity_to_search`
+ * and the run never reaches a provider. Every enrichment fixture therefore needs
+ * a real, findable company behind it.
+ */
+export const createCompany = async (name: string): Promise<string> => {
+  const result = await call<{ createCompany: { id: string } }>(
+    'graphql',
+    `mutation Create($data: CompanyCreateInput!) {
+       createCompany(data: $data) { id }
+     }`,
+    { data: { name } },
+  );
+
+  return result.createCompany.id;
+};
+
+export const deleteCompany = async (id: string): Promise<void> => {
+  await call('graphql', `mutation Del($id: UUID!) { deleteCompany(id: $id) { id } }`, {
+    id,
+  });
+};
+
+export type EnrichedPerson = ScoredPerson & {
+  greenlightEnrichmentStatus: string | null;
+  greenlightEnrichedAt: string | null;
+  /** The provenance blob. `unknown` for the same reason `greenlightTrace` is. */
+  greenlightEnrichment?: unknown;
+};
+
+export const readEnrichment = async (
+  id: string,
+): Promise<EnrichedPerson | null> => {
+  const result = await call<{ person: EnrichedPerson[] | EnrichedPerson | null }>(
+    'graphql',
+    `query ReadEnrichment($id: UUID!) {
+       person(filter: { id: { eq: $id } }) {
+         id
+         greenlightScore
+         greenlightDecision
+         greenlightEnrichmentStatus
+         greenlightEnrichedAt
+         greenlightEnrichment
+       }
+     }`,
+    { id },
+  );
+
+  const person = result.person;
+
+  return Array.isArray(person) ? (person[0] ?? null) : person;
+};
+
+/** One enriched field, as the app writes it. */
+export type EnrichedField = {
+  value: string;
+  parsedValue: string | number;
+  sourceUrl: string;
+  sourceTitle: string;
+  retrievedAt: string;
+  confidence: number;
+  verification: string;
+  searchProvider: string;
+  reasoningProvider: string;
+  reasoningModel: string;
+};
+
+export const enrichedFields = (
+  person: EnrichedPerson | null,
+): Record<string, EnrichedField> => {
+  const blob = person?.greenlightEnrichment;
+
+  if (typeof blob !== 'object' || blob === null) {
+    return {};
+  }
+
+  const fields = (blob as { fields?: unknown }).fields;
+
+  return typeof fields === 'object' && fields !== null
+    ? (fields as Record<string, EnrichedField>)
+    : {};
 };
 
 /**
