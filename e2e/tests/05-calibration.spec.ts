@@ -63,12 +63,37 @@ let subjectId: string;
 let control: ScoredPerson;
 let subject: ScoredPerson;
 
+/**
+ * Whether this workspace actually has calibration delivered.
+ *
+ * Everything below measures the *difference* a licence makes, so on a workspace
+ * with no licence key there is no difference to measure and the subject lead
+ * correctly fails. Asserting a pass there does not catch a regression — it
+ * reports the absence of a licence as a broken feature, which is what happened
+ * in CI: a fresh container has no `LICENCE_KEY`, so every calibration assertion
+ * failed while the product was working exactly as designed.
+ *
+ * `06-enrichment-live` already skips when its providers are absent, for the same
+ * reason. This is that guard, applied to the precondition this suite needs.
+ *
+ * Deliberately derived from the *scored control lead* rather than from a
+ * configuration read: it answers "did calibration reach the scoring engine",
+ * which is the precondition the assertions actually depend on, rather than "is a
+ * key present", which could be true while delivery is broken. A regression that
+ * stops calibration reaching the engine still fails the suite rather than
+ * silently skipping it — because a workspace that has a licence will report
+ * calibration here, and only an unlicensed one skips.
+ */
+let calibrationDelivered = false;
+
 test.beforeAll(async () => {
   controlId = await createPerson(CONTROL);
   subjectId = await createPerson(SUBJECT);
 
   control = await waitForDecision(controlId);
   subject = await waitForDecision(subjectId);
+
+  calibrationDelivered = traceCalibration(control.greenlightTrace) !== null;
 });
 
 test.afterAll(async () => {
@@ -80,6 +105,12 @@ test.afterAll(async () => {
 });
 
 test.describe('a licence delivers calibration that changes a score', () => {
+  test.skip(
+    () => !calibrationDelivered,
+    'needs a workspace whose licence delivers calibration; a fresh container ' +
+      'has no LICENCE_KEY, so there is no delivered vocabulary to measure',
+  );
+
   test('the control lead passes on the shipped title list', () => {
     // Precondition, not the feature. If this fails the rule itself is broken and
     // every assertion below would be measuring the wrong thing.
