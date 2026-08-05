@@ -79,6 +79,13 @@ export interface EnrichmentEnvironment {
   readonly llmModel: string | null;
   readonly searchProvider: SearchProviderName;
   readonly searchApiKey: string | null;
+  /**
+   * Only SearXNG uses this. Brave and Serper are hosted services at a fixed
+   * endpoint; a self-hosted instance has no endpoint we could know, so the base
+   * URL is to SearXNG what the API key is to the other two — the one piece of
+   * configuration without which the provider cannot be addressed at all.
+   */
+  readonly searchBaseUrl: string | null;
   readonly monthlyCap: number;
 }
 
@@ -111,10 +118,27 @@ const readBooleanDefaultTrue = (value: unknown): boolean => {
   return !['false', '0', 'no', 'off'].includes(normalised);
 };
 
+const SEARCH_PROVIDER_NAMES: readonly SearchProviderName[] = [
+  'brave',
+  'serper',
+  'searxng',
+];
+
+/**
+ * Anything unrecognised is `none`, not an error.
+ *
+ * The value arrives from a SELECT application variable, so the only way to see a
+ * name that is not on this list is an older or newer build of the app writing
+ * into the same workspace. Resolving that to "no search" degrades enrichment to
+ * rules-only scoring, which is a supported state; resolving it to a guess would
+ * send the customer's queries somewhere they did not choose.
+ */
 const readSearchProvider = (value: unknown): SearchProviderName => {
   const normalised = trimmedOrNull(value)?.toLowerCase() ?? 'none';
 
-  return normalised === 'brave' || normalised === 'serper' ? normalised : 'none';
+  return SEARCH_PROVIDER_NAMES.includes(normalised as SearchProviderName)
+    ? (normalised as SearchProviderName)
+    : 'none';
 };
 
 /**
@@ -148,6 +172,7 @@ export const readEnrichmentEnvironment = (
   llmModel: trimmedOrNull(env['LLM_MODEL']),
   searchProvider: readSearchProvider(env['SEARCH_PROVIDER']),
   searchApiKey: trimmedOrNull(env['SEARCH_API_KEY']),
+  searchBaseUrl: trimmedOrNull(env['SEARCH_BASE_URL']),
   monthlyCap: readCap(env['MONTHLY_ENRICHMENT_CAP']),
 });
 
@@ -233,20 +258,58 @@ export const resolveReasoningProvider = (
 
 export type SearchChoice =
   | { kind: 'brave' | 'serper'; apiKey: string }
-  | { kind: 'none'; reason: 'not_selected' | 'api_key_missing' };
+  | { kind: 'searxng'; baseUrl: string }
+  | { kind: 'none'; reason: SearchUnavailableReason };
+
+export type SearchUnavailableReason =
+  /** `SEARCH_PROVIDER` is None — the shipped default, and a legitimate choice. */
+  | 'not_selected'
+  /** Brave or Serper selected with no `SEARCH_API_KEY`. */
+  | 'api_key_missing'
+  /** SearXNG selected with no `SEARCH_BASE_URL`. */
+  | 'base_url_missing'
+  /** `SEARCH_BASE_URL` is not an absolute http(s) URL. */
+  | 'base_url_invalid';
 
 /**
- * Search has no free path and no fallback: both providers are the customer's
- * own account under the customer's own key, per the data-egress table. A
- * provider selected without a key resolves to `none` with a reason rather than
- * being attempted, because an unauthenticated request is a guaranteed `401` that
- * would trip the circuit breaker and mask a genuine outage later.
+ * There is no fallback and no default: whichever provider the admin named is
+ * the one that is used, or none is.
+ *
+ * The two hosted providers are the customer's own account under the customer's
+ * own key. A provider selected without a key resolves to `none` with a reason
+ * rather than being attempted, because an unauthenticated request is a
+ * guaranteed `401` that would trip the circuit breaker and mask a genuine outage
+ * later.
+ *
+ * SearXNG needs the mirror-image check. It has no key — a self-hosted instance
+ * on the customer's own network is authenticated by being reachable at all — but
+ * it does need an address, and an address is the thing a hosted provider never
+ * needs. So `SEARCH_BASE_URL` is validated *here*, before a socket is opened,
+ * for exactly the reason the key is: a request to a URL that is not a URL is a
+ * thrown `TypeError` from `fetch`, which arrives as `transport_failure`, trips
+ * the breaker, and tells an admin their SearXNG is down when in fact they typed
+ * `localhost:8888` without a scheme. A configuration mistake has to present as a
+ * configuration answer or nobody will ever find it.
  */
 export const resolveSearchProvider = (
   environment: EnrichmentEnvironment,
 ): SearchChoice => {
   if (environment.searchProvider === 'none') {
     return { kind: 'none', reason: 'not_selected' };
+  }
+
+  if (environment.searchProvider === 'searxng') {
+    if (environment.searchBaseUrl === null) {
+      return { kind: 'none', reason: 'base_url_missing' };
+    }
+
+    const baseUrl = normaliseBaseUrl(environment.searchBaseUrl);
+
+    if (baseUrl === null) {
+      return { kind: 'none', reason: 'base_url_invalid' };
+    }
+
+    return { kind: 'searxng', baseUrl };
   }
 
   if (environment.searchApiKey === null) {
@@ -257,6 +320,32 @@ export const resolveSearchProvider = (
     kind: environment.searchProvider,
     apiKey: environment.searchApiKey,
   };
+};
+
+/**
+ * Accept an absolute `http`/`https` URL and return it without its trailing
+ * slash; reject everything else.
+ *
+ * The trailing slash is stripped here rather than in the adapter so that the
+ * adapter can append `/search` unconditionally and the value that reaches it is
+ * already known-good. Non-HTTP schemes are refused rather than passed through:
+ * `file:` and `data:` are both things `fetch` will happily accept, and a search
+ * base URL is never either of them.
+ */
+const normaliseBaseUrl = (raw: string): string | null => {
+  let parsed: URL;
+
+  try {
+    parsed = new URL(raw);
+  } catch {
+    return null;
+  }
+
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    return null;
+  }
+
+  return raw.replace(/\/+$/, '');
 };
 
 /* -------------------------------------------------------------------------- */

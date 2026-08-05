@@ -55,13 +55,21 @@ export default defineApplication({
       isSecret: true,
     },
 
+    // SearXNG is listed first among the real options on purpose. It is the only
+    // one that keeps the search half of enrichment inside the customer's own
+    // infrastructure — no third-party account, no key to rotate, no per-query
+    // bill, and no query text leaving the estate — which is the same property
+    // that makes the rest of this app run inside their Twenty instance. The two
+    // hosted providers remain for customers who would rather buy the capability
+    // than run it.
     SEARCH_PROVIDER: {
       universalIdentifier: APP_VARIABLE_UNIVERSAL_IDENTIFIERS.SEARCH_PROVIDER,
       description:
-        'Web search provider used to gather evidence before enrichment. Leave as None to score on CRM data alone.',
+        'Web search provider used to gather evidence before enrichment. SearXNG is self-hosted: no API key and no query text leaves your network. Leave as None to score on CRM data alone.',
       type: FieldType.SELECT,
       options: [
         { label: 'None', value: 'none' },
+        { label: 'SearXNG (self-hosted)', value: 'searxng' },
         { label: 'Brave Search', value: 'brave' },
         { label: 'Serper', value: 'serper' },
       ],
@@ -70,9 +78,19 @@ export default defineApplication({
     SEARCH_API_KEY: {
       universalIdentifier: APP_VARIABLE_UNIVERSAL_IDENTIFIERS.SEARCH_API_KEY,
       description:
-        'API key for the selected search provider. Required unless the provider is None.',
+        'API key for the selected search provider. Required for Brave and Serper. SearXNG needs no key — leave this blank.',
       type: FieldType.TEXT,
       isSecret: true,
+    },
+    // Deliberately **not** secret, for the same reason LICENCE_API_BASE_URL is
+    // not: it is an address, usually a private one like http://searxng:8080,
+    // hiding it would only make a typo harder to diagnose, and there is nothing
+    // on this path worth protecting — the provider has no credential at all.
+    SEARCH_BASE_URL: {
+      universalIdentifier: APP_VARIABLE_UNIVERSAL_IDENTIFIERS.SEARCH_BASE_URL,
+      description:
+        'Base URL of your SearXNG instance, including the scheme and without a trailing slash, e.g. http://searxng:8080. Required when the provider is SearXNG, ignored otherwise. The instance must allow the JSON output format: add "- json" under "search: formats:" in its settings.yml.',
+      type: FieldType.TEXT,
     },
 
     MONTHLY_ENRICHMENT_CAP: {

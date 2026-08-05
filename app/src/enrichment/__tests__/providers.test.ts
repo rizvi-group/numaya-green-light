@@ -17,6 +17,7 @@ const baseEnvironment = (
   llmModel: null,
   searchProvider: 'none',
   searchApiKey: null,
+  searchBaseUrl: null,
   monthlyCap: 1000,
   ...overrides,
 });
@@ -81,6 +82,37 @@ describe('readEnrichmentEnvironment', () => {
     expect(readEnrichmentEnvironment({ MONTHLY_ENRICHMENT_CAP: '-5' }).monthlyCap).toBe(
       1000,
     );
+  });
+});
+
+describe('readEnrichmentEnvironment — search provider', () => {
+  it('should read every provider name the app offers', () => {
+    for (const name of ['brave', 'serper', 'searxng'] as const) {
+      expect(
+        readEnrichmentEnvironment({ SEARCH_PROVIDER: name }).searchProvider,
+      ).toBe(name);
+      expect(
+        readEnrichmentEnvironment({ SEARCH_PROVIDER: name.toUpperCase() })
+          .searchProvider,
+      ).toBe(name);
+    }
+  });
+
+  it('should resolve an unrecognised provider to none rather than a guess', () => {
+    expect(
+      readEnrichmentEnvironment({ SEARCH_PROVIDER: 'google' }).searchProvider,
+    ).toBe('none');
+  });
+
+  it('should read the SearXNG base URL, treating blank as unset', () => {
+    expect(
+      readEnrichmentEnvironment({ SEARCH_BASE_URL: ' http://searxng:8080 ' })
+        .searchBaseUrl,
+    ).toBe('http://searxng:8080');
+    expect(readEnrichmentEnvironment({ SEARCH_BASE_URL: '   ' }).searchBaseUrl).toBe(
+      null,
+    );
+    expect(readEnrichmentEnvironment({}).searchBaseUrl).toBe(null);
   });
 });
 
@@ -193,6 +225,76 @@ describe('resolveSearchProvider', () => {
       kind: 'none',
       reason: 'not_selected',
     });
+  });
+
+  it('should resolve SearXNG on its base URL and ask for no key', () => {
+    expect(
+      resolveSearchProvider(
+        baseEnvironment({
+          searchProvider: 'searxng',
+          searchBaseUrl: 'http://searxng:8080',
+        }),
+      ),
+    ).toEqual({ kind: 'searxng', baseUrl: 'http://searxng:8080' });
+  });
+
+  it('should ignore a stray API key left behind by a previous provider', () => {
+    // An admin who switches from Brave to SearXNG has no reason to clear the
+    // key first, and a key that reached a self-hosted instance in a header
+    // would be a credential leaked to a service that never wanted one.
+    expect(
+      resolveSearchProvider(
+        baseEnvironment({
+          searchProvider: 'searxng',
+          searchBaseUrl: 'http://searxng:8080',
+          searchApiKey: 'left-over-brave-key',
+        }),
+      ),
+    ).toEqual({ kind: 'searxng', baseUrl: 'http://searxng:8080' });
+  });
+
+  it('should strip a trailing slash so the adapter can append its path', () => {
+    expect(
+      resolveSearchProvider(
+        baseEnvironment({
+          searchProvider: 'searxng',
+          searchBaseUrl: 'http://searxng:8080/',
+        }),
+      ),
+    ).toEqual({ kind: 'searxng', baseUrl: 'http://searxng:8080' });
+  });
+
+  it('should report a missing base URL distinctly from a missing key', () => {
+    expect(
+      resolveSearchProvider(baseEnvironment({ searchProvider: 'searxng' })),
+    ).toEqual({ kind: 'none', reason: 'base_url_missing' });
+  });
+
+  it('should refuse a base URL that is not an absolute http(s) URL', () => {
+    // Each of these would otherwise reach `fetch` and come back as a thrown
+    // TypeError — reported as `transport_failure`, tripping the breaker, and
+    // telling the admin their instance is down when they simply typed it wrong.
+    for (const searchBaseUrl of [
+      'searxng:8080',
+      'localhost:8888',
+      '/search',
+      'file:///etc/passwd',
+      'not a url at all',
+    ]) {
+      expect(
+        resolveSearchProvider(
+          baseEnvironment({ searchProvider: 'searxng', searchBaseUrl }),
+        ),
+      ).toEqual({ kind: 'none', reason: 'base_url_invalid' });
+    }
+  });
+
+  it('should not require a base URL of the hosted providers', () => {
+    expect(
+      resolveSearchProvider(
+        baseEnvironment({ searchProvider: 'brave', searchApiKey: 'k' }),
+      ),
+    ).toEqual({ kind: 'brave', apiKey: 'k' });
   });
 });
 

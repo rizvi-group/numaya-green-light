@@ -47,5 +47,9 @@ export const createSearchPort = (choice: SearchChoice): SearchPort | null => {
     return null;
   }
 
+  if (choice.kind === 'searxng') {
+    return createSearchClient({ provider: 'searxng', baseUrl: choice.baseUrl });
+  }
+
   return createSearchClient({ provider: choice.kind, apiKey: choice.apiKey });
 };

@@ -20,8 +20,9 @@
 │  │  Configuration Layer 1 (App Variables)                │    │
 │  │  ├─ USE_TWENTY_AI (boolean, default true)            │    │
 │  │  ├─ LLM_BASE_URL + LLM_API_KEY (fallback, optional) │    │
-│  │  ├─ SEARCH_PROVIDER (required: Brave/Serper/none)   │    │
-│  │  ├─ SEARCH_API_KEY (if provider configured)          │    │
+│  │  ├─ SEARCH_PROVIDER (SearXNG/Brave/Serper/none)     │    │
+│  │  ├─ SEARCH_BASE_URL (SearXNG only — self-hosted)     │    │
+│  │  ├─ SEARCH_API_KEY (Brave/Serper only)               │    │
 │  │  ├─ MONTHLY_ENRICHMENT_CAP (integer)                 │    │
 │  │  └─ LICENCE_KEY (customer purchases from Numaya)     │    │
 │  │                                                        │    │
@@ -67,10 +68,14 @@
    ┌────┴─────┐      ┌──────┴────┐  ┌─────────┴──┐   ┌──────┴───────┐
    │ Twenty    │      │ OpenAI    │  │ Search     │   │  Numaya      │
    │ AI        │      │ /Anthropic│  │ Provider   │   │  License     │
-   │ (native)  │      │ /etc      │  │ (Brave/    │   │  Service     │
-   │           │      │ (BYOK)    │  │  Serper)   │   │ (phone-home) │
-   └───────────┘      └───────────┘  │ (BYOK)     │   └──────────────┘
-                                      └────────────┘
+   │ (native)  │      │ /Ollama   │  │ Brave /    │   │  Service     │
+   │           │      │ /etc      │  │ Serper     │   │ (phone-home) │
+   └───────────┘      │ (BYOK)    │  │ (BYOK)     │   └──────────────┘
+                      └───────────┘  └────────────┘
+
+   …or neither of the middle two ever leaves the box above: SEARCH_PROVIDER=searxng
+   points at the customer's own instance, and LLM_BASE_URL at their own endpoint.
+   Both were exercised that way on 2026-08-05 — see app/src/__live__/.
 ```
 
 ## Execution Paths
@@ -99,7 +104,8 @@
 
 **Requirements:**
 - `USE_TWENTY_AI=true` (default) OR customer provided `LLM_BASE_URL` + `LLM_API_KEY`
-- `SEARCH_PROVIDER` configured (Brave/Serper/none)
+- `SEARCH_PROVIDER` configured (SearXNG/Brave/Serper/none). SearXNG needs `SEARCH_BASE_URL` and no key;
+  Brave and Serper need `SEARCH_API_KEY` and no base URL
 - Monthly enrichment cap not exceeded
 - Field shelf-life cache miss (value is stale)
 
@@ -270,10 +276,32 @@ Data leaves customer's Twenty instance only to:
    - Key: Customer's own API key
    - Processor: Respective LLM vendor (customer handles their DPA with them)
 
-2. **Search Provider** (customer's choice: Brave/Serper/SearXNG self-hosted)
+2. **Search Provider** (customer's choice: SearXNG self-hosted / Brave / Serper / none)
    - What: Query (company name, person name)
-   - Key: Customer's own API key
-   - Processor: Respective search vendor (or customer if self-hosted)
+   - Key: Customer's own API key — **except SearXNG, which has none**
+   - Processor: Respective search vendor, **or nobody at all when SearXNG is selected**
+
+   The SearXNG row is the reason this table is worth reading twice. With
+   `SEARCH_PROVIDER=searxng` the query is sent to `SEARCH_BASE_URL`, which is a service on the
+   customer's own infrastructure, so **no query text and no lead identifier leaves the estate on the
+   search leg, and there is no search sub-processor to name in a DPA at all**. The instance itself
+   federates to public engines, but it does so on the customer's behalf and under their own
+   configuration — Greenlight neither chooses those engines nor sees a credential for them.
+
+   That makes the honest egress statement provider-dependent, and it should be written that way on the
+   security page rather than averaged into one sentence:
+
+   | `SEARCH_PROVIDER` | Query leaves the estate? | Third-party key? | Sub-processor to name |
+   |---|---|---|---|
+   | `none`    | No  | No  | — |
+   | `searxng` | No (to a service the customer runs) | No | — |
+   | `brave`   | Yes | Yes | Brave Software |
+   | `serper`  | Yes | Yes | Serper |
+
+   With `searxng` **and** a self-hosted OpenAI-compatible endpoint for `LLM_BASE_URL`, both legs of
+   enrichment are inside the customer's own infrastructure and rows 1 and 2 of this table are empty.
+   Verified end to end on 2026-08-05 against a local SearXNG and a local Ollama — see the live suite at
+   `app/src/__live__/`.
 
 3. **Numaya Licensing Service** (one-way phone-home)
    - What: Licence key + workspace ID (as `deviceFingerprint`) + workspace name (as `deviceName`)

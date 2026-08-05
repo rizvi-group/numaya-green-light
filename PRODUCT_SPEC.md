@@ -18,8 +18,9 @@ Lead quality gate for sales CRM. Defines sales-ready standard, blocks unqualifie
 **Layer 1: App Variables (secrets)**
 - `USE_TWENTY_AI` — boolean, default true (use Twenty's native AI if configured)
 - `LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL` (fallback, optional BYOK)
-- `SEARCH_PROVIDER` — Brave | Serper | none (customer configures)
-- `SEARCH_API_KEY` (secret, if search provider selected)
+- `SEARCH_PROVIDER` — SearXNG | Brave | Serper | none (customer configures)
+- `SEARCH_BASE_URL` (SearXNG only — it is self-hosted, so there is no fixed endpoint and no key)
+- `SEARCH_API_KEY` (secret, Brave and Serper only)
 - `MONTHLY_ENRICHMENT_CAP` — integer
 - `LICENCE_KEY` — purchased from Numaya
 
@@ -41,7 +42,7 @@ Lead quality gate for sales CRM. Defines sales-ready standard, blocks unqualifie
 | Capability | Interface | v1.0 Adapters |
 |---|---|---|
 | **Reasoning** | Twenty's AI (native) or OpenAI-compatible | Twenty AI (default) · OpenAI · Anthropic · Azure (BYOK fallback) |
-| **Search** | `SearchProvider` | Brave · Serper · **none** (rules-only) |
+| **Search** | `SearchProvider` | **SearXNG (self-hosted, no key, no egress)** · Brave · Serper · **none** (rules-only) |
 
 ### Failure Modes & Safety
 

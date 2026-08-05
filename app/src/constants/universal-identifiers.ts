@@ -40,6 +40,12 @@ export const APP_VARIABLE_UNIVERSAL_IDENTIFIERS = {
   LLM_MODEL: 'e5eb22ef-d1d5-45e0-800c-b66267a17c74',
   SEARCH_PROVIDER: 'dd4d5550-8178-48c1-b7e5-4c055e99c359',
   SEARCH_API_KEY: 'cafbbf6e-c682-4abe-ae08-10f795a70e0d',
+  // Added with the SearXNG adapter. Only that provider reads it — Brave and
+  // Serper are hosted at addresses this app already knows, so a base URL is
+  // meaningless to them, and a self-hosted instance has no address it could
+  // possibly know. Appending a variable is safe; the eight above it keep their
+  // identifiers and every workspace keeps its stored values.
+  SEARCH_BASE_URL: '784d8c5a-02d0-471b-ae30-fe586d629b18',
   MONTHLY_ENRICHMENT_CAP: '3dba836a-c7fe-4b87-a284-52fae3f3c014',
   LICENCE_KEY: 'a9d0f94f-3866-46ca-9c8b-d14d3f905a10',
 } as const;

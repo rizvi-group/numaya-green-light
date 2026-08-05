@@ -33,6 +33,7 @@ export const environment = (
   llmModel: null,
   searchProvider: 'brave',
   searchApiKey: 'search-key',
+  searchBaseUrl: null,
   monthlyCap: 100,
   ...overrides,
 });

@@ -154,5 +154,20 @@ export const BRAVE_SEARCH_ENDPOINT = 'https://api.search.brave.com/res/v1/web/se
 /** Serper's Google endpoint. Key travels in `X-API-KEY`. */
 export const SERPER_SEARCH_ENDPOINT = 'https://google.serper.dev/search';
 
+/**
+ * SearXNG's search path, appended to the customer's `SEARCH_BASE_URL`.
+ *
+ * A path and not an endpoint, and that is the whole difference between this
+ * provider and the two above it. Brave and Serper are hosted services whose
+ * address is a fact about the vendor, so it belongs in the source. SearXNG is
+ * something the customer runs; its address is a fact about *their* estate, which
+ * we cannot know and must not guess, so it is an application variable and only
+ * the path is a constant.
+ *
+ * There is no API key line to write here because there is no API key. That is
+ * the point of the provider.
+ */
+export const SEARXNG_SEARCH_PATH = '/search';
+
 /** Path appended to `LLM_BASE_URL` for the OpenAI-compatible fallback. */
 export const OPENAI_COMPATIBLE_CHAT_PATH = '/chat/completions';

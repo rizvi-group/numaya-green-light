@@ -133,7 +133,17 @@ export interface EnrichmentSource {
 /* -------------------------------------------------------------------------- */
 
 export type ReasoningProviderName = 'twenty-ai' | 'openai-compatible' | 'none';
-export type SearchProviderName = 'brave' | 'serper' | 'none';
+
+/**
+ * `searxng` is a self-hosted metasearch instance the customer already runs, and
+ * it is the only search option on this list that keeps the search half of
+ * enrichment entirely inside their own infrastructure: no third-party account,
+ * no API key, no per-query cost, and no query text leaving the estate. For a
+ * product whose whole pitch is "runs inside your own Twenty", that is the
+ * default worth recommending rather than a fallback — see the data-egress table
+ * in ARCHITECTURE.md, where it is the one row that reads "none".
+ */
+export type SearchProviderName = 'brave' | 'serper' | 'searxng' | 'none';
 
 /**
  * The two tiers PRODUCT_SPEC's cost control asks for.
