@@ -95,9 +95,12 @@ export const clampedFieldLabels = async (
       range.setStart(node, 0);
       range.setEnd(node, text.length);
 
-      const tops = new Set(
-        [...range.getClientRects()].map((rect) => Math.round(rect.top)),
-      );
+      const rects = range.getClientRects();
+      const tops = new Set<number>();
+
+      for (let index = 0; index < rects.length; index += 1) {
+        tops.add(Math.round(rects[index].top));
+      }
 
       if (tops.size > 1) {
         clipped.push(text);

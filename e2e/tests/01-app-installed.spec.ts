@@ -85,17 +85,42 @@ test.describe('Greenlight is installed', () => {
     await expect(page.getByText('Gate decision: Gate')).toBeVisible();
     await expect(page.getByText('Lead score', { exact: true }).first()).toBeVisible();
 
-    // The second, tighter truncation surface. A column heading gets the view
-    // field's `size` less 28px for its icon, which is narrower than the 90px the
-    // record page allows, so a label that fits the record page can still be
-    // ellipsised here — "Greenlig…" was what this queue used to show for both of
-    // its Greenlight columns.
-    expect(
-      await truncatedColumnHeaders(page),
-      'a column heading in this queue is cut off',
-    ).toEqual([]);
-
     await page.screenshot({ path: 'shots/01-gate-queue.png', fullPage: true });
+    expect(await errorBanners(page)).toEqual([]);
+  });
+
+  test('no Greenlight table view cuts off a column heading', async ({ page }) => {
+    // The second, tighter truncation surface. A heading gets the view field's
+    // `size` less 37px of icon, gutter and margin, which is narrower than the
+    // 90px the record page allows — so a label that clears the record page can
+    // still be ellipsised here, and this queue used to show "Greenlig…" for both
+    // of its Greenlight columns. Every table view is walked because the fix is a
+    // per-column `size` and a view that was missed would be silent.
+    const TABLE_VIEWS = [
+      'Greenlight Gate Queue',
+      'Greenlight Unscored (Failed Open)',
+      'Greenlight Compliance Blocked',
+      'Greenlight Enrichment',
+      'Greenlight Do Not Contact',
+      'Greenlight Never Scored',
+    ];
+
+    await page.goto('/');
+    await waitForShell(page);
+
+    for (const view of TABLE_VIEWS) {
+      await sidebarEntry(page, view).click();
+      await expect(
+        page.getByRole('button', { name: view }),
+      ).toBeVisible({ timeout: 60_000 });
+
+      expect(
+        await truncatedColumnHeaders(page),
+        `a column heading in "${view}" is cut off`,
+      ).toEqual([]);
+    }
+
+    await page.screenshot({ path: 'shots/01-view-headers.png', fullPage: true });
     expect(await errorBanners(page)).toEqual([]);
   });
 

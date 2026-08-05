@@ -55,13 +55,14 @@ import { LEAD_SCORE_FIELD_UNIVERSAL_IDENTIFIERS } from 'src/constants/universal-
  * first — and the three "Do not contact X" labels all collapsed to "Do not
  * contact …" for the same reason.
  *
- * Table column headers are a second, tighter surface: `<span>` with
+ * Table column headings are a second, tighter surface: `<span>` with
  * `text-overflow: ellipsis` at 13px Inter, and the usable width is the view
- * field's `size` minus 28px for the icon and gutter. A 110px column gives 82px,
- * which is less than the 90px the record page gives. Both surfaces had to be
- * satisfied by the same string, so the labels below are sized against the
- * tighter of the two and the view `size`s were raised where a label still would
- * not clear the header.
+ * field's `size` minus 37px — 28 for the icon and its gutter, 9 for the right
+ * margin. A 110px column gives 73px, well under the 90px the record page gives,
+ * so a label can clear the record page and still be cut off in a table. Both
+ * surfaces had to be satisfied by the same string, so the labels below are sized
+ * against the tighter of the two and the six views that carry a score or a
+ * decision column had their `size`s raised to match.
  *
  * What was weighed against dropping the prefix, and what was checked rather than
  * assumed on the live instance:

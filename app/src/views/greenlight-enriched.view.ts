@@ -109,7 +109,7 @@ export default defineView({
         LEAD_SCORE_FIELD_UNIVERSAL_IDENTIFIERS.greenlightScore,
       position: 3,
       isVisible: true,
-      size: 110,
+      size: 120,
     },
     {
       universalIdentifier: ENRICHED_LEADS_VIEW_FIELD_UNIVERSAL_IDENTIFIERS.jobTitle,
