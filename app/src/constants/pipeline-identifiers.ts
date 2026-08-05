@@ -250,3 +250,83 @@ export const PERSON_RECORD_PAGE_PIPELINE_VIEW_FIELD_UNIVERSAL_IDENTIFIERS = {
   greenlightNextActionKind: '201c8b01-4529-4431-a995-2f0ce0e6eb8a',
   greenlightAdvisedAt: '06d49fa6-e75a-4b60-a9a7-154c380b0832',
 } as const;
+
+/* -------------------------------------------------------------------------- */
+/* Runtime — appended by the runtime workstream                                */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The board's one logic function.
+ *
+ * The header above says the runtime workstream would mint its route identifiers
+ * "in its own file". It is minting them here instead, and the reason is the
+ * failure that header exists to prevent rather than an exception to it: the
+ * identifier-collision guard in `src/constants/__tests__/identifier-uniqueness.test.ts`
+ * discovers `src/constants/*.ts` by glob and asserts the discovered list by
+ * name, so a seventh constants file is a change to that list — while an
+ * *addition* to this file is inside the guard from the moment it is written.
+ * Nothing about a logic-function identifier cares which module it was declared
+ * in, and the risk the header names (one function registered twice under two
+ * identifiers) is a risk of *duplicating* a declaration, not of co-locating one.
+ *
+ * There is exactly one. `wire.ts` sets out the argument for a single route with
+ * a discriminated `action` over four routes, and it is the same argument
+ * `icp-control` and `backfill-control` already settled: board, capture, advance
+ * and advise share an authentication check, a configuration read and a licence
+ * read, and four routes means four copies of that preamble of which three will
+ * eventually be missing something the fourth has.
+ */
+export const PIPELINE_CONTROL_LOGIC_FUNCTION_UNIVERSAL_IDENTIFIER =
+  '7c1e0b34-9d52-4a86-b0f3-6e2a4d5c81f7';
+
+/**
+ * The narrative agent — a model handle, exactly as
+ * `ENRICHMENT_EXTRACTOR_AGENT_UNIVERSAL_IDENTIFIER` is.
+ *
+ * `runAgent` takes an agent identifier and there is no other route from a logic
+ * function to Twenty's own AI, so the agent has to exist for the narrative
+ * rewrite to be reachable at all. Every word that shapes an answer is built in
+ * `src/logic-functions/pipeline-run.ts` and passed as the `prompt` argument;
+ * see `src/agents/greenlight-next-action.agent.ts` for why the manifest carries
+ * one sentence and not the instruction.
+ */
+export const PIPELINE_NEXT_ACTION_AGENT_UNIVERSAL_IDENTIFIER =
+  '2b93d5c1-4f08-4e7a-9c16-8a5f3d0e6b24';
+
+/* -------------------------------------------------------------------------- */
+/* HTTP route                                                                  */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Same two-constant shape as the gate-queue, backfill and ICP routes: the front
+ * component posts to the `/s`-prefixed path, which is how `RestApiClient`
+ * recognises an app route rather than a core REST call, and declaring both here
+ * means a mismatch between the two halves is a compile-time import of one
+ * constant rather than a 404 discovered in a live workspace.
+ *
+ * Singular `/greenlight/pipeline` and not `/greenlight/board`: three of the four
+ * actions behind it are not the board.
+ */
+export const PIPELINE_ROUTE_PATH = '/greenlight/pipeline';
+export const PIPELINE_CLIENT_PATH = `/s${PIPELINE_ROUTE_PATH}`;
+
+/* -------------------------------------------------------------------------- */
+/* Command menu                                                                */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * "Open the pipeline (Greenlight)".
+ *
+ * Minted here, late, because the front-component workstream needed it and
+ * correctly declined to invent one in its own file — a UUID for a permanent
+ * entity created outside the constants files would sit outside the collision
+ * guard that globs this directory, which is the one place a duplicate is caught
+ * before it reaches a workspace.
+ *
+ * Unlike the ICP command, this is genuinely a shortcut rather than a second way
+ * in. The board is the first sidebar entry and nobody needs to be told it is
+ * there; the command exists for the rep who is standing on a lead record and
+ * wants the board without reaching for the mouse.
+ */
+export const PIPELINE_COMMAND_MENU_ITEM_UNIVERSAL_IDENTIFIER =
+  '7339f71a-e63c-4f0e-a79d-48facae95e87';

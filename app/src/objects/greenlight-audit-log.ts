@@ -128,6 +128,44 @@ export default defineObject({
         },
         { position: 10, label: 'Backfill', value: 'BACKFILL', color: 'sky' },
         { position: 11, label: 'Licence', value: 'LICENCE', color: 'yellow' },
+        // Appended for the pipeline board. Safe for the third time and for the
+        // same reason: identity is the `value`, `position` is display order, and
+        // no row migrates.
+        //
+        // Before these existed the board filed every move under `RELEASED` — the
+        // nearest existing value, meaning "a human overrode the engine by hand".
+        // That is true of a move made with criteria outstanding and false of the
+        // ordinary case, so the log was about to start describing routine
+        // pipeline progress using the vocabulary reserved for overrides. The
+        // rows would have been individually accurate in their `name` and
+        // collectively useless to a filter, which is the failure the
+        // SUPPRESSED / UNSUPPRESSED split was introduced to avoid.
+        //
+        // Two values rather than one, on that same argument. A stage move
+        // changes a field on a record that already existed. A handoff **creates
+        // the Opportunity** — it is the only path in the app that does, and it is
+        // the row somebody answering "when did this deal actually start, and off
+        // which lead" needs to find on its own. Collapsing it into MOVED would
+        // bury the answer among every drag a rep made afterwards.
+        //
+        // Neither is an override. Whether the criteria were met is recorded in
+        // the row's own fields, not in its event type: a move made anyway is
+        // still a MOVED, because a rep who knows something the CRM does not is
+        // doing the normal thing rather than a special one.
+        //
+        // Colours: MOVED is iris — near SCORED's blue, because both are the
+        // engine's routine bookkeeping about where a record stands, but distinct
+        // enough to separate in a list. HANDED_OFF is grass: green already means
+        // RELEASED, and a handoff is not a resolution — it is the start of
+        // something, which is the same reason ENRICHED took turquoise rather
+        // than a second blue.
+        { position: 12, label: 'Moved', value: 'MOVED', color: 'iris' },
+        {
+          position: 13,
+          label: 'Handed off',
+          value: 'HANDED_OFF',
+          color: 'grass',
+        },
       ],
       defaultValue: "'SCORED'",
     },
