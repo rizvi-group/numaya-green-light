@@ -66,23 +66,55 @@ import type {
 export const PIPELINE_PAGE_SIZE = 60;
 
 /**
- * How many pages of join rows the activity read will walk per batch of deals.
+ * How many tasks and notes are read per deal, newest first.
  *
- * This was one page, and one page is wrong in a way that only shows up with real
- * data. The join is asked for up to sixty rows covering a batch of **sixty**
- * opportunities, so it fills the moment those deals average more than one task
- * or note between them — which is every workspace that has been used. A full
- * page is correctly read as "there may be more I have not seen", so the
- * discovery-call and note criteria went to `indeterminate` for the entire board
- * and the exit-criteria feature reported "could not check" permanently. It was
- * visible on the first live board, on the demo seed data, before it was visible
- * in a test.
+ * ## Why this is a nested read at all
  *
- * Five pages is three hundred activity rows per sixty deals. Past that the walk
- * stops and says so, on the same reasoning as `walkConnection`'s page allowance:
- * a bound that is announced is a limit, and a bound that is silent is a lie.
+ * The activity criteria — "a discovery call was logged", "a note since the
+ * meeting" — were originally answered by querying the join tables directly and
+ * filtering them:
+ *
+ *     taskTargets(filter: { opportunityId: { in: [...] } })
+ *
+ * **`taskTarget` has no filterable `opportunityId`.** The column is selectable
+ * and comes back on every row, which is exactly why this survived review, but
+ * the filter is rejected:
+ *
+ *     Object taskTarget doesn't have any "opportunityId" field.
+ *
+ * So the query threw on every single call, the `catch` swallowed it into "could
+ * not read", and both criteria reported `indeterminate` for every deal on the
+ * board from the day they were written. The feature the pipeline is *for* — the
+ * path to the next stage — had never once evaluated its two activity criteria.
+ * Nothing failed loudly: fail-open did its job perfectly and produced a board
+ * that looked considered while answering nothing.
+ *
+ * Two things follow, and the second matters more than the fix:
+ *
+ *   - A `catch` that turns every failure into the same soft outcome cannot
+ *     distinguish "this workspace has no tasks" from "this query is malformed".
+ *     The notice now names a failure as a failure, and the empty case reports
+ *     `unmet` rather than `indeterminate`, so the two stop looking alike.
+ *   - `filterable` is not implied by `selectable`. Anything this app filters on
+ *     is now worth proving against a live instance rather than reading off a
+ *     response body.
+ *
+ * The nested form is what Twenty actually supports, and it is strictly better
+ * anyway: the activities arrive inside the opportunity read instead of costing a
+ * second and third round trip per batch of sixty.
+ *
+ * ## Twenty per deal
+ *
+ * Ordered newest-first, so the newest note is always inside the window. For
+ * tasks the criterion wants the latest `dueAt`, and a task created long ago can
+ * be due tomorrow — so a deal with more than twenty tasks could in principle
+ * have its latest due date outside the window. Twenty logged activities on one
+ * deal is already far beyond what these two criteria are asking about, and the
+ * alternative is paging every deal's full history to answer one boolean. The
+ * approximation is bounded and stated; unbounded paging here would cost more
+ * than the question is worth.
  */
-const ACTIVITY_JOIN_PAGES = 5;
+const ACTIVITY_PER_DEAL = 20;
 
 /**
  * The board's request budget, against Twenty's 100-per-minute ceiling.
@@ -641,202 +673,125 @@ export const loadOpportunityActivity = async (
     return { byOpportunityId, notices };
   }
 
-  const calls = new Map<string, string | null>();
-  const notes = new Map<string, string | null>();
-  let callsComplete = true;
-  let notesComplete = true;
+  let complete = true;
 
   for (let start = 0; start < opportunityIds.length; start += PIPELINE_PAGE_SIZE) {
     const batch = opportunityIds.slice(start, start + PIPELINE_PAGE_SIZE);
 
-    const taskPage = await readJoinPage(client, {
-      connection: 'taskTargets',
-      related: 'task',
-      relatedSelection: { createdAt: true, dueAt: true },
-      opportunityIds: batch,
-    });
+    let nodes: Record<string, unknown>[];
 
-    if (taskPage === null) {
-      callsComplete = false;
-    } else {
-      callsComplete = callsComplete && !taskPage.truncated;
+    try {
+      const response = await client.query({
+        opportunities: {
+          __args: {
+            first: PIPELINE_PAGE_SIZE,
+            filter: { id: { in: [...batch] } },
+          },
+          edges: {
+            node: {
+              id: true,
+              taskTargets: {
+                __args: {
+                  first: ACTIVITY_PER_DEAL,
+                  orderBy: [{ createdAt: 'DescNullsLast' }],
+                },
+                edges: { node: { task: { id: true, createdAt: true, dueAt: true } } },
+              },
+              noteTargets: {
+                __args: {
+                  first: ACTIVITY_PER_DEAL,
+                  orderBy: [{ createdAt: 'DescNullsLast' }],
+                },
+                edges: { node: { note: { id: true, createdAt: true } } },
+              },
+            },
+          },
+        },
+      });
 
-      for (const [opportunityId, node] of taskPage.rows) {
-        const when = text(node['dueAt']) ?? text(node['createdAt']);
+      nodes = readConnectionNodes(response, 'opportunities');
+    } catch (error) {
+      logGreenlight('pipeline_activity_read_failed', {
+        batch: batch.length,
+        error: describeError(error),
+      });
 
-        calls.set(opportunityId, latest(calls.get(opportunityId) ?? null, when));
-      }
-
-      if (!taskPage.truncated) {
-        for (const id of batch) {
-          if (!calls.has(id)) {
-            calls.set(id, null);
-          }
-        }
-      }
+      complete = false;
+      continue;
     }
 
-    const notePage = await readJoinPage(client, {
-      connection: 'noteTargets',
-      related: 'note',
-      relatedSelection: { createdAt: true },
-      opportunityIds: batch,
-    });
+    for (const node of nodes) {
+      const opportunityId = text(node['id']);
 
-    if (notePage === null) {
-      notesComplete = false;
-    } else {
-      notesComplete = notesComplete && !notePage.truncated;
-
-      for (const [opportunityId, node] of notePage.rows) {
-        const when = text(node['createdAt']);
-
-        notes.set(opportunityId, latest(notes.get(opportunityId) ?? null, when));
+      if (opportunityId === null) {
+        continue;
       }
 
-      if (!notePage.truncated) {
-        for (const id of batch) {
-          if (!notes.has(id)) {
-            notes.set(id, null);
-          }
-        }
-      }
+      byOpportunityId.set(opportunityId, {
+        lastDiscoveryCallAt: latestOf(node['taskTargets'], 'task', (record) =>
+          text(record['dueAt']) ?? text(record['createdAt']),
+        ),
+        lastNoteAt: latestOf(node['noteTargets'], 'note', (record) =>
+          text(record['createdAt']),
+        ),
+      });
     }
   }
 
-  for (const id of opportunityIds) {
-    const activity: {
-      lastDiscoveryCallAt?: string | null;
-      lastNoteAt?: string | null;
-    } = {};
-
-    if (calls.has(id)) {
-      activity.lastDiscoveryCallAt = calls.get(id) ?? null;
-    }
-
-    if (notes.has(id)) {
-      activity.lastNoteAt = notes.get(id) ?? null;
-    }
-
-    byOpportunityId.set(id, activity);
-  }
-
-  if (!callsComplete || !notesComplete) {
+  if (!complete) {
     notices.push(
-      'These deals have more tasks and notes than Greenlight reads in one pass, so the criteria that depend on an activity are shown as unchecked rather than unmet on the deals it did not reach.',
+      'Greenlight could not read the tasks and notes on some of these deals, so the criteria that depend on an activity are shown as unchecked rather than unmet.',
     );
   }
 
   return { byOpportunityId, notices };
 };
 
-const readJoinPage = async (
-  client: GreenlightApiClient,
-  {
-    connection,
-    related,
-    relatedSelection,
-    opportunityIds,
-  }: {
-    connection: string;
-    related: string;
-    relatedSelection: Record<string, unknown>;
-    opportunityIds: readonly string[];
-  },
-): Promise<{
-  rows: readonly (readonly [string, Record<string, unknown>])[];
-  truncated: boolean;
-} | null> => {
-  const rows: (readonly [string, Record<string, unknown>])[] = [];
-  const seen = new Set<string>();
-  let cursor: string | null = null;
-
-  for (let page = 0; page < ACTIVITY_JOIN_PAGES; page += 1) {
-    const filter: Record<string, unknown> = {
-      opportunityId: { in: [...opportunityIds] },
-    };
-
-    if (cursor !== null) {
-      filter['createdAt'] = { lte: cursor };
-    }
-
-    let nodes: Record<string, unknown>[];
-
-    try {
-      const response = await client.query({
-        [connection]: {
-          __args: {
-            first: PIPELINE_PAGE_SIZE,
-            filter,
-            orderBy: [{ createdAt: 'DescNullsLast' }],
-          },
-          edges: {
-            node: {
-              id: true,
-              createdAt: true,
-              opportunityId: true,
-              [related]: { id: true, ...relatedSelection },
-            },
-          },
-        },
-      });
-
-      nodes = readConnectionNodes(response, connection);
-    } catch (error) {
-      logGreenlight('pipeline_activity_read_failed', {
-        connection,
-        page,
-        error: describeError(error),
-      });
-
-      // A failure on a later page still has real rows behind it, and reporting
-      // those as "read nothing" would send every deal to `indeterminate` when
-      // most of them were answered. Only a first-page failure means the read
-      // genuinely produced nothing.
-      return page === 0 ? null : { rows, truncated: true };
-    }
-
-    let added = 0;
-
-    for (const node of nodes) {
-      const joinId = text(node['id']);
-
-      if (joinId !== null) {
-        if (seen.has(joinId)) {
-          continue;
-        }
-
-        seen.add(joinId);
-      }
-
-      added += 1;
-
-      const opportunityId = text(node['opportunityId']);
-      const record = node[related];
-
-      if (opportunityId !== null && isPlainRecord(record)) {
-        rows.push([opportunityId, record] as const);
-      }
-    }
-
-    const last = nodes[nodes.length - 1];
-    const lastCreatedAt = last === undefined ? null : text(last['createdAt']);
-
-    // A short page is the end of the data, which is the answer this whole
-    // function exists to be able to give: every activity these deals have has
-    // been seen, so a deal absent from `rows` genuinely has none.
-    if (
-      nodes.length < PIPELINE_PAGE_SIZE ||
-      lastCreatedAt === null ||
-      added === 0
-    ) {
-      return { rows, truncated: false };
-    }
-
-    cursor = lastCreatedAt;
+/**
+ * The newest timestamp across a nested activity connection.
+ *
+ * Returns `null` — "this deal has no such activity", which the criterion reports
+ * as `unmet` — rather than `undefined`, because a nested connection that comes
+ * back empty for a deal we successfully read *is* the answer. The `undefined`
+ * case is now reserved for the batch that failed outright, which is the only
+ * remaining way to genuinely not know.
+ */
+const latestOf = (
+  connection: unknown,
+  related: string,
+  when: (record: Record<string, unknown>) => string | null,
+): string | null => {
+  if (!isPlainRecord(connection)) {
+    return null;
   }
 
-  return { rows, truncated: true };
+  const edges = connection['edges'];
+
+  if (!Array.isArray(edges)) {
+    return null;
+  }
+
+  let newest: string | null = null;
+
+  for (const edge of edges) {
+    if (!isPlainRecord(edge)) {
+      continue;
+    }
+
+    const node = edge['node'];
+
+    if (!isPlainRecord(node)) {
+      continue;
+    }
+
+    const record = node[related];
+
+    if (isPlainRecord(record)) {
+      newest = latest(newest, when(record));
+    }
+  }
+
+  return newest;
 };
 
 /* -------------------------------------------------------------------------- */

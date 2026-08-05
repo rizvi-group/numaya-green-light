@@ -94,6 +94,25 @@ const connection = (
   [name]: { edges: nodes.map((node) => ({ node })) },
 });
 
+/**
+ * One nested activity connection, as the real API returns it: the join rows for
+ * a single deal, each wrapping its related `task` or `note`.
+ *
+ * Fixtures are still written flat — `{ opportunityId, dueAt }` — because that is
+ * what a test wants to read. The nesting is this function's job, and keeping it
+ * here means the ~30 existing activity fixtures did not have to be rewritten
+ * when the query shape changed underneath them.
+ */
+const nestedEdges = (
+  rows: readonly Record<string, unknown>[] | undefined,
+  opportunityId: unknown,
+  related: string,
+): Record<string, unknown> => ({
+  edges: (rows ?? [])
+    .filter((row) => String(row['opportunityId'] ?? '') === String(opportunityId ?? ''))
+    .map((row) => ({ node: { [related]: row } })),
+});
+
 const byCreatedAtDesc = (
   records: readonly Record<string, unknown>[],
 ): Record<string, unknown>[] =>
@@ -213,6 +232,39 @@ export const createFakeWorkspace = (
           );
         }
 
+        // The activity read: an id list plus the two nested activity
+        // connections. It is matched on the nested selection rather than on the
+        // filter, because the shape of the selection is what makes this read
+        // distinguishable from an ordinary page.
+        //
+        // This branch replaced one that answered top-level `taskTargets(filter:
+        // { opportunityId: ... })` queries. That fake was faithful to the code
+        // and the code was wrong: `taskTarget` has no *filterable*
+        // `opportunityId`, so the real API rejected every one of those calls
+        // while this file happily answered them. A fake built from the same
+        // assumption as the code under test cannot catch a wrong assumption —
+        // only the live instance did, and only once the board was on a screen.
+        const nested = asked.includes('taskTargets') || asked.includes('noteTargets');
+
+        if (nested) {
+          if (options.failActivityReads === true) {
+            throw new Error('opportunities could not be read with their activity');
+          }
+
+          const wanted = path(filter, 'id', 'in');
+          const ids = Array.isArray(wanted) ? wanted.map(String) : [];
+
+          const joined = opportunities
+            .filter((deal) => ids.includes(String(deal['id'] ?? '')))
+            .map((deal) => ({
+              id: deal['id'],
+              taskTargets: nestedEdges(options.taskTargets, deal['id'], 'task'),
+              noteTargets: nestedEdges(options.noteTargets, deal['id'], 'note'),
+            }));
+
+          return connection('opportunities', joined);
+        }
+
         const contactId = path(filter, 'pointOfContactId', 'eq');
 
         if (typeof contactId === 'string') {
@@ -275,28 +327,6 @@ export const createFakeWorkspace = (
         }
 
         return connection('companies', companies);
-      }
-
-      /* --- activity ------------------------------------------------------- */
-
-      for (const join of ['taskTargets', 'noteTargets'] as const) {
-        if (join in request) {
-          if (options.failActivityReads === true) {
-            throw new Error(`${join} could not be read`);
-          }
-
-          const wanted = path(args(request, join)['filter'], 'opportunityId', 'in');
-          const ids = Array.isArray(wanted) ? wanted.map(String) : [];
-          const rows =
-            join === 'taskTargets'
-              ? (options.taskTargets ?? [])
-              : (options.noteTargets ?? []);
-
-          return connection(
-            join,
-            rows.filter((row) => ids.includes(String(row['opportunityId'] ?? ''))),
-          );
-        }
       }
 
       return {};
