@@ -5,7 +5,9 @@ playwright-report/
 playwright/.cache/
 blob-report/
 shots/
+demos/output/
 _explore.mjs
+_probe*
 
 # stray exploration screenshots
 *.png

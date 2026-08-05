@@ -9,6 +9,9 @@
     "test:headed": "playwright test --headed",
     "test:ui": "playwright test --ui",
     "report": "playwright show-report",
+    "demos": "playwright test --config playwright.demos.config.ts",
+    "demos:mp4": "node demos/encode-mp4.mjs",
+    "demos:all": "playwright test --config playwright.demos.config.ts && node demos/encode-mp4.mjs",
     "install:browsers": "playwright install chromium",
     "typecheck": "tsc --noEmit"
   },

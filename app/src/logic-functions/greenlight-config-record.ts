@@ -18,7 +18,7 @@
  * seed / read / merge story is unit-testable without a Twenty instance.
  */
 
-import { buildDefaultConfig } from 'src/scoring';
+import { buildDefaultConfig, DEFAULT_FIELD_MAPPING } from 'src/scoring';
 import type { ResolvedScoringConfig } from 'src/scoring';
 
 import { isPlainRecord } from 'src/logic-functions/greenlight-api';
@@ -423,9 +423,14 @@ const readFieldMapping = (
   const decisionMakerField = record['decisionMakerFieldName'];
 
   if (typeof decisionMakerField === 'string' && decisionMakerField.trim()) {
+    // Read the shipped candidates rather than repeating them. They were
+    // duplicated here, and the two copies drifted the moment `position` was
+    // removed from the engine's list for reading Twenty's row-ordering number
+    // as a job title — this copy would have quietly kept the bug alive for any
+    // workspace that had configured a decision-maker field.
     mapping['jobTitle'] = prepend(
       [decisionMakerField.trim()],
-      ['jobTitle', 'title', 'role', 'position'],
+      DEFAULT_FIELD_MAPPING.jobTitle,
     );
   }
 

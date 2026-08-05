@@ -278,6 +278,63 @@ export const waitForDecision = async (
   }
 };
 
+/**
+ * One row of the Greenlight audit log.
+ *
+ * Added for the demo recordings in `e2e/demos/`, which have to put the override
+ * reason on screen: it is the Article 22 evidence, the audit-log *view* does not
+ * carry it as a column, and the record page clips it to about thirty characters.
+ * Reading it back through the API is the only way to show what was actually
+ * recorded. Purely additive — nothing in `e2e/tests/` calls it.
+ */
+export type AuditRow = {
+  id: string;
+  name: string;
+  eventType: string | null;
+  overrideReason: string | null;
+  actorType: string | null;
+  actorDisplayName: string | null;
+  score: number | null;
+  band: string | null;
+  decision: string | null;
+  occurredAt: string | null;
+};
+
+export const readAuditRowsForLead = async (
+  leadDisplayName: string,
+): Promise<AuditRow[]> => {
+  const result = await call<{
+    greenlightAuditLogs: { edges: { node: AuditRow }[] };
+  }>(
+    'graphql',
+    `query AuditForLead($lead: String!) {
+       greenlightAuditLogs(
+         filter: { leadDisplayName: { eq: $lead } }
+         orderBy: { occurredAt: DescNullsLast }
+         first: 20
+       ) {
+         edges {
+           node {
+             id
+             name
+             eventType
+             overrideReason
+             actorType
+             actorDisplayName
+             score
+             band
+             decision
+             occurredAt
+           }
+         }
+       }
+     }`,
+    { lead: leadDisplayName },
+  );
+
+  return result.greenlightAuditLogs.edges.map((edge) => edge.node);
+};
+
 /** View ids are resolved by name so a re-apply that renumbers nothing still works. */
 export const viewIdByName = async (name: string): Promise<string> => {
   const result = await call<{

@@ -28,7 +28,21 @@ export const DEFAULT_FIELD_MAPPING: FieldMapping = {
   region: ['region', 'country', 'address.addressCountry', 'company.region'],
   employeeCount: ['employees', 'employeeCount', 'company.employees', 'companySize'],
   contactName: ['name', 'fullName', 'contactName', 'firstName'],
-  jobTitle: ['jobTitle', 'title', 'role', 'position'],
+  // `position` is deliberately NOT a candidate. On Twenty — the only platform
+  // this ships on — `position` is the row-ordering number, not a job title, so
+  // the fallback resolved a real value of `-5` and handed it to the
+  // decision-maker rule as somebody's role. It was visible in a demo recording
+  // before it was visible in a test.
+  //
+  // The subtler half: `src/enrichment/plan.ts` reads this same mapping to decide
+  // whether a human has already answered a field. A resolvable `position` meant
+  // every Twenty Person looked like it already had a job title, so job-title
+  // enrichment could never fire at all.
+  //
+  // A workspace that genuinely stores titles in a field called `position` can
+  // still say so through the Layer 3 mapping. Guessing it by default costs more
+  // than it ever paid.
+  jobTitle: ['jobTitle', 'title', 'role'],
   seniority: ['seniority', 'seniorityLevel'],
   email: ['emails', 'email', 'emails.primaryEmail', 'workEmail'],
   phone: ['phones', 'phone', 'phones.primaryPhoneNumber', 'mobile'],
