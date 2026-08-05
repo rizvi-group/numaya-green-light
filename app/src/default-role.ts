@@ -18,7 +18,10 @@ import {
  * | Object               | Read | Write | Why                                                                     |
  * |----------------------|------|-------|-------------------------------------------------------------------------|
  * | `person`             | yes  | yes   | The lead being scored; score/decision/trace and the suppression fields.  |
- * | `company`            | yes  | no    | ICP industry / size / region are read through the relation.              |
+ * | `company`            | yes  | yes   | ICP inputs are read through the relation; capture creates one. See below.|
+ * | `opportunity`        | yes  | yes   | The deal lanes of the pipeline board; readiness and next-action fields.  |
+ * | `task` / `taskTarget`| yes  | no    | Stage exit criteria ask whether an activity was logged against a deal.   |
+ * | `note` / `noteTarget`| yes  | no    | Same, for the "a note since the meeting" criterion.                      |
  * | `greenlightConfig`   | yes  | yes   | Read on every run; created at install and patched on upgrade.            |
  * | `greenlightAuditLog` | yes  | yes   | Every decision appends a row.                                            |
  *
@@ -26,6 +29,35 @@ import {
  * every object in the workspace — messages, calendar events, connected
  * accounts, API keys, workspace members — to a function that only ever wanted
  * `Person.jobTitle`.
+ *
+ * ## Two grants that were argued down rather than added
+ *
+ * **`calendarEvent` is deliberately absent.** PIPELINE_SPEC.md's exit-criteria
+ * table originally read "a discovery call logged (Twenty Task or CalendarEvent
+ * in the past)". Reading the calendar object means reading every meeting in the
+ * workspace — attendees, titles, times, including everything unrelated to sales
+ * — to answer one boolean about one deal. Task and Note are records somebody
+ * deliberately attached to *this* opportunity, and they answer the same question
+ * with a fraction of the exposure. The criterion is therefore "an activity was
+ * logged", and a workspace whose reps live in the calendar and never log a task
+ * will see that criterion sit unmet rather than have Greenlight read their diary
+ * to guess. Stated on the ICP page's own principle: an app that quietly widens
+ * its reach to improve a number is doing the wrong trade on the customer's
+ * behalf.
+ *
+ * **`company` write is a genuine reversal, recorded as one.** The row above used
+ * to read "no", and the comment on the grant itself used to say Greenlight had
+ * "no reason to ever write to a company record, permanently". That was true of a
+ * passive scorer and stopped being true when capture became the product's entry
+ * point: typing a company name for a brand-new lead has to create the Company,
+ * because Twenty has no Lead object to hold it instead.
+ *
+ * Twenty bundles create with update — `ObjectPermissionManifest` has no separate
+ * create flag — so "create but never modify" is not expressible here and is
+ * enforced in the capture path instead: it links to an existing Company by
+ * domain or name and only ever inserts when no match is found, never patching a
+ * company record a human already curated. That is a weaker guarantee than a
+ * permission bit and it is named as weaker on purpose.
  *
  * Twenty bundles create with update: `ObjectPermissionManifest` exposes
  * read / update / softDelete / destroy and no separate create flag, so
@@ -99,10 +131,63 @@ export default defineApplicationRole({
       canDestroyObjectRecords: false,
     },
     {
-      // ICP inputs are read through Person -> Company. Read-only, permanently:
-      // Greenlight has no reason to ever write to a company record.
+      // ICP inputs are read through Person -> Company. Write exists for exactly
+      // one caller — capture creating a Company that does not exist yet — and
+      // the header comment records why that reversed an explicit "read-only,
+      // permanently" commitment.
       objectUniversalIdentifier:
         STANDARD_OBJECT_UNIVERSAL_IDENTIFIERS.company.universalIdentifier,
+      canReadObjectRecords: true,
+      canUpdateObjectRecords: true,
+      canSoftDeleteObjectRecords: false,
+      canDestroyObjectRecords: false,
+    },
+    {
+      // The deal half of the pipeline board. Update covers create, which the
+      // handoff needs: crossing the Qualified -> New line is the only path in
+      // the app that writes a new Opportunity.
+      objectUniversalIdentifier:
+        STANDARD_OBJECT_UNIVERSAL_IDENTIFIERS.opportunity.universalIdentifier,
+      canReadObjectRecords: true,
+      canUpdateObjectRecords: true,
+      canSoftDeleteObjectRecords: false,
+      canDestroyObjectRecords: false,
+    },
+    {
+      // Read-only, and it should stay that way: exit criteria ask whether a
+      // human logged an activity. An app that could write the task would be
+      // able to satisfy its own criterion, which makes the readiness number
+      // worthless.
+      objectUniversalIdentifier:
+        STANDARD_OBJECT_UNIVERSAL_IDENTIFIERS.task.universalIdentifier,
+      canReadObjectRecords: true,
+      canUpdateObjectRecords: false,
+      canSoftDeleteObjectRecords: false,
+      canDestroyObjectRecords: false,
+    },
+    {
+      // The join row. Reading `task` alone cannot tell you which opportunity an
+      // activity belongs to.
+      objectUniversalIdentifier:
+        STANDARD_OBJECT_UNIVERSAL_IDENTIFIERS.taskTarget.universalIdentifier,
+      canReadObjectRecords: true,
+      canUpdateObjectRecords: false,
+      canSoftDeleteObjectRecords: false,
+      canDestroyObjectRecords: false,
+    },
+    {
+      // "A note logged since the meeting" — same reasoning as task, including
+      // why write stays off.
+      objectUniversalIdentifier:
+        STANDARD_OBJECT_UNIVERSAL_IDENTIFIERS.note.universalIdentifier,
+      canReadObjectRecords: true,
+      canUpdateObjectRecords: false,
+      canSoftDeleteObjectRecords: false,
+      canDestroyObjectRecords: false,
+    },
+    {
+      objectUniversalIdentifier:
+        STANDARD_OBJECT_UNIVERSAL_IDENTIFIERS.noteTarget.universalIdentifier,
       canReadObjectRecords: true,
       canUpdateObjectRecords: false,
       canSoftDeleteObjectRecords: false,
