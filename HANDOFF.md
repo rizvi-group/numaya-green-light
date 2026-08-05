@@ -531,16 +531,63 @@ and it handed a salesperson an app-developer tutorial. Nothing was left for a ho
 is the onboarding entry point and every other surface already carries its own sidebar entry. Its five
 identifiers are retired in `RETIRED_UNIVERSAL_IDENTIFIERS` and must never be reused.
 
-### Found on the way, not fixed
+### Found on the way, deferred then taken — 2026-08-05
 
-**Record-page field labels truncate at 90px with no tooltip.** The label column on the record page is a
-fixed 90px with `text-overflow: ellipsis` and carries no `title` or `aria-label`, so anything over about
-twelve characters is unreadable: "Greenlight score" and "Greenlight decision" both render as
-"Greenlight …", and three of the four suppression fields render as "Do not contac…". It is softened by
-Twenty using the full label as the empty-value placeholder, so an unset field still labels itself — but a
-*filled* one does not. Fixing it means renaming ten user-visible labels to ≤12 characters, which drops the
-"Greenlight" prefix that makes them findable in field pickers and changes six views' column headers. That is
-a product naming decision, not a defect fix, so it is recorded here rather than taken unilaterally.
+**Record-page field labels truncated at 90px. Fixed by renaming all ten.** This was recorded here as a
+product naming decision rather than a defect fix, and it has now been taken. Two of the original
+observations were wrong and are corrected below, because both were load-bearing for anyone else who reaches
+this problem.
+
+| field `name` (unchanged) | was | is |
+|---|---|---|
+| `greenlightScore` | Greenlight score | **Lead score** |
+| `greenlightDecision` | Greenlight decision | **Gate decision** |
+| `greenlightTrace` | Greenlight trace | **Score trace** |
+| `greenlightSuppressed` | Do not contact | **Do not contact** (unchanged — it already fitted) |
+| `greenlightSuppressionReason` | Do not contact reason | **Block reason** |
+| `greenlightSuppressionNote` | Do not contact note | **Block note** |
+| `greenlightSuppressedAt` | Do not contact since | **Blocked since** |
+| `greenlightEnrichmentStatus` | Enrichment status | **Enrich status** |
+| `greenlightEnrichedAt` | Last enriched | **Last enriched** (unchanged) |
+| `greenlightEnrichment` | Greenlight enrichment | **Sourced data** |
+
+**Correction 1: it is not a character ellipsis, it is a word-boundary clamp.** The label div is exactly
+`width: 90px` at 11.96px Inter, `-webkit-line-clamp: 1` over `white-space: pre-wrap`. A label that does not
+fit loses **whole trailing words**, so "Greenlight score" did not render as "Greenlight sc…" — it rendered
+as "Greenlight …", byte-identical to the decision, the trace and the enrichment document. Four fields, one
+string. The practical rule is that the *entire* label must measure under 90px; there is no partial credit.
+
+**Correction 2: there is a tooltip.** The label carries no `title` and no `aria-label`, but it is wrapped in
+Twenty's overflowing-text component, and hovering a clamped label pops a portal node with the full label in
+it. That softens the bug and does not fix it: two fields rendering as the same eight characters cannot be
+told apart without hovering both, and nothing on screen says there is anything to hover.
+
+**`description` surfaces nowhere in the UI.** Checked on the record page (absent from the DOM), on hover
+(absent), and in Settings → Data model → People, whose field list shows name, app and data type only. It is
+documentation for whoever reads the metadata API. It cannot carry meaning a truncated label lost.
+
+**Icons do survive**, at both surfaces — they sit outside the 90px box. Nine of the ten fields carry a
+distinct icon; the two enrichment fields share `IconSparkles` as a family marker.
+
+**Column headings are the tighter surface, and they were mis-measured first.** A heading is a `<span>` with
+`text-overflow: ellipsis` at 13px Inter, and its usable width is the view field's `size` **minus 37px** — 28
+for the icon and its gutter, 9 for the right margin. The first attempt used 28, widened the decision column
+to 120, and the Playwright run caught "Gate decision" still ellipsised at 83px against a label needing 85.
+Score columns are now 120 and decision columns 130 across all six views that carry them.
+
+**What was given up.** The filter / field dropdown does *not* truncate — it renders labels at natural width —
+and it searches **by label only**. Typing "greenlight" there used to return the score and the decision; it
+now returns nothing. That is the real cost. It was accepted because the prefix was never legible on either
+surface a rep reads, and because the app still announces itself through eight sidebar views that begin with
+"Greenlight", the "(Greenlight)" command-menu actions, and the App column in Settings → Data model that
+names Numaya Greenlight against every one of these fields. A suffix — "Score (Greenlight)" — was measured
+before it was rejected: in a word-clamped 90px box it renders as "Score …".
+
+**Pinned in Playwright, because `innerText` cannot see this.** A clamped label still reports its whole
+string to `innerText`, which is exactly why `toContainText('Greenlight score')` passed throughout the bug.
+`clampedFieldLabels` in `e2e/support/ui.ts` measures the rendered line boxes instead, and
+`truncatedColumnHeaders` compares heading scroll widths; the suite walks all six table views. Suite is now
+20 tests.
 
 ---
 
