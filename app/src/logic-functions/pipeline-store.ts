@@ -66,6 +66,25 @@ import type {
 export const PIPELINE_PAGE_SIZE = 60;
 
 /**
+ * How many pages of join rows the activity read will walk per batch of deals.
+ *
+ * This was one page, and one page is wrong in a way that only shows up with real
+ * data. The join is asked for up to sixty rows covering a batch of **sixty**
+ * opportunities, so it fills the moment those deals average more than one task
+ * or note between them — which is every workspace that has been used. A full
+ * page is correctly read as "there may be more I have not seen", so the
+ * discovery-call and note criteria went to `indeterminate` for the entire board
+ * and the exit-criteria feature reported "could not check" permanently. It was
+ * visible on the first live board, on the demo seed data, before it was visible
+ * in a test.
+ *
+ * Five pages is three hundred activity rows per sixty deals. Past that the walk
+ * stops and says so, on the same reasoning as `walkConnection`'s page allowance:
+ * a bound that is announced is a limit, and a bound that is silent is a lie.
+ */
+const ACTIVITY_JOIN_PAGES = 5;
+
+/**
  * The board's request budget, against Twenty's 100-per-minute ceiling.
  *
  *     1   configuration read
@@ -704,7 +723,7 @@ export const loadOpportunityActivity = async (
 
   if (!callsComplete || !notesComplete) {
     notices.push(
-      'Greenlight could not read every task and note attached to these deals, so the criteria that depend on them are shown as unchecked rather than unmet.',
+      'These deals have more tasks and notes than Greenlight reads in one pass, so the criteria that depend on an activity are shown as unchecked rather than unmet on the deals it did not reach.',
     );
   }
 
@@ -728,45 +747,96 @@ const readJoinPage = async (
   rows: readonly (readonly [string, Record<string, unknown>])[];
   truncated: boolean;
 } | null> => {
-  try {
-    const response = await client.query({
-      [connection]: {
-        __args: {
-          first: PIPELINE_PAGE_SIZE,
-          filter: { opportunityId: { in: [...opportunityIds] } },
-          orderBy: [{ createdAt: 'DescNullsLast' }],
-        },
-        edges: {
-          node: {
-            opportunityId: true,
-            [related]: { id: true, ...relatedSelection },
+  const rows: (readonly [string, Record<string, unknown>])[] = [];
+  const seen = new Set<string>();
+  let cursor: string | null = null;
+
+  for (let page = 0; page < ACTIVITY_JOIN_PAGES; page += 1) {
+    const filter: Record<string, unknown> = {
+      opportunityId: { in: [...opportunityIds] },
+    };
+
+    if (cursor !== null) {
+      filter['createdAt'] = { lte: cursor };
+    }
+
+    let nodes: Record<string, unknown>[];
+
+    try {
+      const response = await client.query({
+        [connection]: {
+          __args: {
+            first: PIPELINE_PAGE_SIZE,
+            filter,
+            orderBy: [{ createdAt: 'DescNullsLast' }],
+          },
+          edges: {
+            node: {
+              id: true,
+              createdAt: true,
+              opportunityId: true,
+              [related]: { id: true, ...relatedSelection },
+            },
           },
         },
-      },
-    });
+      });
 
-    const nodes = readConnectionNodes(response, connection);
+      nodes = readConnectionNodes(response, connection);
+    } catch (error) {
+      logGreenlight('pipeline_activity_read_failed', {
+        connection,
+        page,
+        error: describeError(error),
+      });
 
-    const rows = nodes.flatMap(
-      (node): (readonly [string, Record<string, unknown>])[] => {
-        const opportunityId = text(node['opportunityId']);
-        const record = node[related];
+      // A failure on a later page still has real rows behind it, and reporting
+      // those as "read nothing" would send every deal to `indeterminate` when
+      // most of them were answered. Only a first-page failure means the read
+      // genuinely produced nothing.
+      return page === 0 ? null : { rows, truncated: true };
+    }
 
-        return opportunityId === null || !isPlainRecord(record)
-          ? []
-          : [[opportunityId, record] as const];
-      },
-    );
+    let added = 0;
 
-    return { rows, truncated: nodes.length >= PIPELINE_PAGE_SIZE };
-  } catch (error) {
-    logGreenlight('pipeline_activity_read_failed', {
-      connection,
-      error: describeError(error),
-    });
+    for (const node of nodes) {
+      const joinId = text(node['id']);
 
-    return null;
+      if (joinId !== null) {
+        if (seen.has(joinId)) {
+          continue;
+        }
+
+        seen.add(joinId);
+      }
+
+      added += 1;
+
+      const opportunityId = text(node['opportunityId']);
+      const record = node[related];
+
+      if (opportunityId !== null && isPlainRecord(record)) {
+        rows.push([opportunityId, record] as const);
+      }
+    }
+
+    const last = nodes[nodes.length - 1];
+    const lastCreatedAt = last === undefined ? null : text(last['createdAt']);
+
+    // A short page is the end of the data, which is the answer this whole
+    // function exists to be able to give: every activity these deals have has
+    // been seen, so a deal absent from `rows` genuinely has none.
+    if (
+      nodes.length < PIPELINE_PAGE_SIZE ||
+      lastCreatedAt === null ||
+      added === 0
+    ) {
+      return { rows, truncated: false };
+    }
+
+    cursor = lastCreatedAt;
   }
+
+  return { rows, truncated: true };
 };
 
 /* -------------------------------------------------------------------------- */

@@ -231,9 +231,42 @@ describe('nextAction — staleness', () => {
     const expected = DEFAULT_STAGE_DWELL_DAYS.screening ?? 0;
     const actions = nextAction(inScreening(expected + 1), NOW);
 
-    expect(actions[0]?.kind).toBe('CHASE_THE_STAGE');
-    expect(actions[0]?.sentence).toContain('15 days');
-    expect(actions[0]?.sentence).toContain('14 days');
+    // Second, not first: this fixture also has every Screening criterion met, so
+    // "ready to advance" leads and staleness follows it. That ordering is the
+    // point — a card that has been sitting for fifteen days *because nobody
+    // moved it* should be told to move, not chased. Chasing is what you do when
+    // you cannot move.
+    const stale = actions.find((action) => action.kind === 'CHASE_THE_STAGE');
+
+    expect(actions[0]?.kind).toBe('ADVANCE_THE_CARD');
+    expect(stale?.sentence).toContain('15 days');
+    expect(stale?.sentence).toContain('14 days');
+  });
+
+  it('should lead with the chase when the stage is not ready to leave', () => {
+    // The same overdue card with one criterion outstanding. Now there is nothing
+    // to advance to, so staleness is the top of the list — and the unmet
+    // criterion outranks it, because "book the discovery call" is what would
+    // actually unstick the deal that chasing it is about.
+    const expected = DEFAULT_STAGE_DWELL_DAYS.screening ?? 0;
+    const actions = nextAction(
+      {
+        ...inScreening(expected + 1),
+        opportunity: {
+          id: 'o-1',
+          stage: 'SCREENING',
+          stageEnteredAt: ago(expected + 1),
+          lastDiscoveryCallAt: null,
+        },
+      },
+      NOW,
+    );
+
+    expect(actions.map((action) => action.kind)).not.toContain(
+      'ADVANCE_THE_CARD',
+    );
+    expect(actions[0]?.kind).toBe('BOOK_A_MEETING');
+    expect(actions.map((action) => action.kind)).toContain('CHASE_THE_STAGE');
   });
 
   it('should say nothing about a lane that never goes stale', () => {

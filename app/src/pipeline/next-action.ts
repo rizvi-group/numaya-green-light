@@ -471,7 +471,29 @@ const rank = (input: NextActionInput, now: Date): PipelineAdvice => {
   ].filter((action): action is RankedAction => action !== null);
 
   if (stage.total > 0 && stage.unmet.length === 0) {
-    actions.push(advanceAction(lane));
+    // **First**, not last.
+    //
+    // This was appended, and appending was wrong in a way only a live board
+    // showed: a Qualified lead with every exit criterion met and a score of 100
+    // led with "Let Greenlight look up industry, region and company size" — an
+    // optional lookup ranked above the handoff, which is the single moment the
+    // whole board exists to make obvious. Twenty-odd cards said it at once.
+    //
+    // The tiers below are all statements about something *missing*, and they are
+    // ordered by how much is missing. "Every criterion for this stage is met" is
+    // not a member of that sequence at all; it is a conclusion about the stage,
+    // reached from the same evidence the tiers are guessing from. A gap
+    // enrichment might fill is speculative — the provider may find nothing — and
+    // holding a ready card behind a maybe is exactly the "connect the dots
+    // yourself" complaint this screen was built to answer.
+    //
+    // The enrichment action does not disappear: it drops to second and the card
+    // renders it under "After that". Enriching a deal that is ready to move is
+    // still worth doing, just not instead of moving it.
+    //
+    // Note this can only fire when the stage has criteria to meet, so it never
+    // pre-empts a tier on a lane with no checklist.
+    actions.unshift(advanceAction(lane));
   }
 
   return {
