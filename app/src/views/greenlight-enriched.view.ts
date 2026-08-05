@@ -38,8 +38,8 @@ const PERSON = STANDARD_OBJECT_UNIVERSAL_IDENTIFIERS.person;
  * ## The columns
  *
  * Status first, because it is what the view is for. `Last enriched` second, so
- * "when did this stop" is answerable by reading down one column. The Greenlight
- * score is there because the whole point of enrichment is to make that score
+ * "when did this stop" is answerable by reading down one column. The lead score
+ * is there because the whole point of enrichment is to make that score
  * mean something — an admin comparing a column of enriched leads against their
  * scores is doing the exact evaluation that justifies the feature's cost. Job
  * title and company are the human context that makes a row identifiable.
@@ -109,7 +109,7 @@ export default defineView({
         LEAD_SCORE_FIELD_UNIVERSAL_IDENTIFIERS.greenlightScore,
       position: 3,
       isVisible: true,
-      size: 100,
+      size: 110,
     },
     {
       universalIdentifier: ENRICHED_LEADS_VIEW_FIELD_UNIVERSAL_IDENTIFIERS.jobTitle,

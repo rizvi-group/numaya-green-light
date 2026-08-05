@@ -6,7 +6,13 @@ import {
   waitForDecision,
   type ScoredPerson,
 } from '../support/twenty-api';
-import { errorBanners, sidebarEntry, tableRow, waitForShell } from '../support/ui';
+import {
+  clampedFieldLabels,
+  errorBanners,
+  sidebarEntry,
+  tableRow,
+  waitForShell,
+} from '../support/ui';
 
 /**
  * Test (b): a weak lead is scored, the outcome is visible to a human, and the
@@ -75,11 +81,11 @@ test.describe('a weak lead is scored and held', () => {
 
     // Read out of the Fields panel, not the timeline: this is the surface a rep
     // is actually looking at when they decide whether to call someone.
-    await expect(fieldsPanel).toContainText('Greenlight score', {
+    await expect(fieldsPanel).toContainText('Lead score', {
       timeout: 60_000,
     });
     await expect(fieldsPanel).toContainText(String(scored.greenlightScore));
-    await expect(fieldsPanel).toContainText('Greenlight decision');
+    await expect(fieldsPanel).toContainText('Gate decision');
     await expect(fieldsPanel).toContainText('Gate');
 
     await page.screenshot({ path: 'shots/02-record.png', fullPage: true });
@@ -95,7 +101,7 @@ test.describe('a weak lead is scored and held', () => {
       .filter({ hasText: /^Fields/ })
       .first();
 
-    await expect(fieldsPanel).toContainText('Greenlight score', {
+    await expect(fieldsPanel).toContainText('Lead score', {
       timeout: 60_000,
     });
 
@@ -106,16 +112,16 @@ test.describe('a weak lead is scored and held', () => {
     // assigned to: the verdict and the do-not-contact flags in General,
     // enrichment in Work, the rule trace in System.
     const EXPECTED_LABELS = [
-      'Greenlight score',
-      'Greenlight decision',
+      'Lead score',
+      'Gate decision',
       'Do not contact',
-      'Do not contact reason',
-      'Do not contact note',
-      'Do not contact since',
-      'Enrichment status',
+      'Block reason',
+      'Block note',
+      'Blocked since',
+      'Enrich status',
       'Last enriched',
-      'Greenlight enrichment',
-      'Greenlight trace',
+      'Sourced data',
+      'Score trace',
     ];
 
     const missing = EXPECTED_LABELS.filter(
@@ -134,6 +140,19 @@ test.describe('a weak lead is scored and held', () => {
     for (const section of ['General', 'Work', 'System']) {
       expect(panelText, `the ${section} section is missing`).toContain(section);
     }
+
+    // Present is not the same as legible, and the assertion above cannot tell
+    // the difference: the panel clamps a label to one line inside a 90px box,
+    // and `innerText` reports the whole string either way. Every label here was
+    // once present and none of them was readable — "Greenlight score",
+    // "Greenlight decision", "Greenlight trace" and "Greenlight enrichment" all
+    // rendered as "Greenlight …", and the three "Do not contact …" satellites
+    // were likewise indistinguishable from each other and from the flag.
+    expect(
+      await clampedFieldLabels(page, EXPECTED_LABELS),
+      'these labels are cut off in the 90px Fields-panel box, so a user cannot ' +
+        'tell them apart on a filled record',
+    ).toEqual([]);
 
     await page.screenshot({ path: 'shots/02-record-fields.png', fullPage: true });
     expect(await errorBanners(page)).toEqual([]);

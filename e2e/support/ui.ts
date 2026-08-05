@@ -59,6 +59,81 @@ export const visibleText = async (page: Page): Promise<string[]> =>
   });
 
 /**
+ * Record-page field labels that do not fit the box Twenty gives them.
+ *
+ * The Fields panel puts every label in a hard 90px div and clamps it to one line
+ * with `-webkit-line-clamp`. That clamp breaks on **words**, so an over-long
+ * label silently loses its trailing words — and, critically, `innerText` still
+ * reports the whole string, so a `toContainText` assertion passes while the user
+ * sees "Greenlight …". Four fields once rendered as those same eight characters.
+ *
+ * Measuring the rendered line boxes is the only way to see it from a test. A
+ * label occupying more than one line box has had everything after the first line
+ * clipped away.
+ */
+export const clampedFieldLabels = async (
+  page: Page,
+  labels: string[],
+): Promise<string[]> =>
+  page.evaluate((wanted) => {
+    const clipped: string[] = [];
+
+    document.querySelectorAll('[data-testid="tooltip"]').forEach((element) => {
+      const text = element.textContent ?? '';
+
+      if (!wanted.includes(text) || element.childNodes.length !== 1) {
+        return;
+      }
+
+      const node = element.firstChild;
+
+      if (!node || node.nodeType !== Node.TEXT_NODE) {
+        return;
+      }
+
+      const range = document.createRange();
+      range.setStart(node, 0);
+      range.setEnd(node, text.length);
+
+      const tops = new Set(
+        [...range.getClientRects()].map((rect) => Math.round(rect.top)),
+      );
+
+      if (tops.size > 1) {
+        clipped.push(text);
+      }
+    });
+
+    return [...new Set(clipped)];
+  }, labels);
+
+/**
+ * Table column headings that are ellipsised.
+ *
+ * A different component from the record page and a tighter budget: a `<span>`
+ * with `text-overflow: ellipsis` whose width is the view field's `size` less
+ * 28px of icon and gutter. Here `scrollWidth` does exceed `clientWidth`, so the
+ * check is the ordinary one.
+ */
+export const truncatedColumnHeaders = async (page: Page): Promise<string[]> =>
+  page.evaluate(() => {
+    const clipped: string[] = [];
+
+    document.querySelectorAll('span').forEach((element) => {
+      if (
+        element.children.length === 0 &&
+        getComputedStyle(element).textOverflow === 'ellipsis' &&
+        element.scrollWidth > element.clientWidth + 1 &&
+        element.textContent
+      ) {
+        clipped.push(element.textContent);
+      }
+    });
+
+    return [...new Set(clipped)];
+  });
+
+/**
  * Anything on screen that reads as an error.
  *
  * A test that passes while an error toast is up is worse than no test, so every

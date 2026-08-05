@@ -88,7 +88,14 @@ export default defineField({
   universalIdentifier:
     ENRICHMENT_FIELD_UNIVERSAL_IDENTIFIERS.greenlightEnrichment,
   name: 'greenlightEnrichment',
-  label: 'Greenlight enrichment',
+  // "Sourced data", not "Greenlight enrichment" — which rendered as "Greenlight
+  // …", the same eight characters as the score, the decision and the trace. The
+  // replacement names the one property that makes this field what it is: every
+  // value in it arrives with the page it came from, the date it was read and a
+  // confidence. It is also the most visually distinct of the three enrichment
+  // labels, which sit next to each other in the Work section. See the label note
+  // in greenlight-decision.field.ts.
+  label: 'Sourced data',
   description:
     'Values Greenlight sourced from the public web, each stored with the page it came from, the date it was read and a confidence. This is machine-gathered data held separately from the fields your team maintains — it never overwrites anything a person entered.',
   type: FieldType.RAW_JSON,

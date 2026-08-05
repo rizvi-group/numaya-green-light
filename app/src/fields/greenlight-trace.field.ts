@@ -23,9 +23,11 @@ import { LEAD_SCORE_FIELD_UNIVERSAL_IDENTIFIERS } from 'src/constants/universal-
 export default defineField({
   universalIdentifier: LEAD_SCORE_FIELD_UNIVERSAL_IDENTIFIERS.greenlightTrace,
   name: 'greenlightTrace',
-  label: 'Greenlight trace',
+  // "Score trace" pairs it with "Lead score" and fits the 90px record-page label
+  // box; "Greenlight trace" did not. See greenlight-decision.field.ts.
+  label: 'Score trace',
   description:
-    'Rule-by-rule explanation of the most recent score, plus the trace id of that run. Shape matches GreenlightAuditLog.ruleTrace. Written by the engine.',
+    "Greenlight's rule-by-rule explanation of the most recent score, plus the trace id of that run. Shape matches GreenlightAuditLog.ruleTrace. Written by the engine.",
   type: FieldType.RAW_JSON,
   icon: 'IconListDetails',
   objectUniversalIdentifier:

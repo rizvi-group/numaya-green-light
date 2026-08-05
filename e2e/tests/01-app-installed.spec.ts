@@ -1,6 +1,11 @@
 import { expect, test } from '@playwright/test';
 
-import { errorBanners, sidebarEntry, waitForShell } from '../support/ui';
+import {
+  errorBanners,
+  sidebarEntry,
+  truncatedColumnHeaders,
+  waitForShell,
+} from '../support/ui';
 
 /**
  * Test (a): the app is installed and a user can reach every screen it ships.
@@ -77,8 +82,18 @@ test.describe('Greenlight is installed', () => {
     // The view header, its filter chip, and the score/decision columns are what
     // make this a queue rather than a second copy of the People list.
     await expect(page.getByRole('button', { name: 'Greenlight Gate Queue' })).toBeVisible();
-    await expect(page.getByText('Greenlight decision: Gate')).toBeVisible();
-    await expect(page.getByText('Greenlight score', { exact: true }).first()).toBeVisible();
+    await expect(page.getByText('Gate decision: Gate')).toBeVisible();
+    await expect(page.getByText('Lead score', { exact: true }).first()).toBeVisible();
+
+    // The second, tighter truncation surface. A column heading gets the view
+    // field's `size` less 28px for its icon, which is narrower than the 90px the
+    // record page allows, so a label that fits the record page can still be
+    // ellipsised here — "Greenlig…" was what this queue used to show for both of
+    // its Greenlight columns.
+    expect(
+      await truncatedColumnHeaders(page),
+      'a column heading in this queue is cut off',
+    ).toEqual([]);
 
     await page.screenshot({ path: 'shots/01-gate-queue.png', fullPage: true });
     expect(await errorBanners(page)).toEqual([]);

@@ -38,6 +38,8 @@ export default defineField({
   universalIdentifier:
     ENRICHMENT_FIELD_UNIVERSAL_IDENTIFIERS.greenlightEnrichedAt,
   name: 'greenlightEnrichedAt',
+  // Unchanged: it already fitted the record page's 90px label box. See the label
+  // note in greenlight-decision.field.ts.
   label: 'Last enriched',
   description:
     'When Greenlight last searched for information about this lead — including runs that found nothing. Empty means enrichment has never run on this record. Individual enriched values carry their own retrieval dates.',

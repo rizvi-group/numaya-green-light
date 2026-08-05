@@ -33,7 +33,10 @@ export default defineField({
   universalIdentifier:
     LEAD_SUPPRESSION_FIELD_UNIVERSAL_IDENTIFIERS.greenlightSuppressedAt,
   name: 'greenlightSuppressedAt',
-  label: 'Do not contact since',
+  // "Blocked since" rather than "Block since": the point of the column is the
+  // duration, and the participle is what says so. See
+  // greenlight-suppression-reason.field.ts for why the satellites are "Block …".
+  label: 'Blocked since',
   description:
     'When this person was added to the Greenlight block list. Set automatically by the "Do not contact" action, and left untouched when the reason is later amended — this is the date contact stopped, not the date the record was last edited.',
   type: FieldType.DATE_TIME,

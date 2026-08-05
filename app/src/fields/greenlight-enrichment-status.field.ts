@@ -46,7 +46,12 @@ export default defineField({
   universalIdentifier:
     ENRICHMENT_FIELD_UNIVERSAL_IDENTIFIERS.greenlightEnrichmentStatus,
   name: 'greenlightEnrichmentStatus',
-  label: 'Enrichment status',
+  // "Enrich status" is a syllable short of the English one would write, and that
+  // is the whole reason for it: "Enrichment status" measures 96px against the
+  // record page's 90px label box and rendered as "Enrichment …", losing the only
+  // word that said what the column was. See the label note in
+  // greenlight-decision.field.ts.
+  label: 'Enrich status',
   description:
     'What happened the last time Greenlight tried to enrich this lead. Empty means it has never tried.',
   type: FieldType.SELECT,

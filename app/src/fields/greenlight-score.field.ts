@@ -45,9 +45,14 @@ import { LEAD_SCORE_FIELD_UNIVERSAL_IDENTIFIERS } from 'src/constants/universal-
 export default defineField({
   universalIdentifier: LEAD_SCORE_FIELD_UNIVERSAL_IDENTIFIERS.greenlightScore,
   name: 'greenlightScore',
-  label: 'Greenlight score',
+  // "Lead score", not "Greenlight score". The record page renders a field label
+  // into a hard 90px box and drops whole words that do not fit; "Greenlight"
+  // alone is 58px of that budget, so every label beginning with it rendered as
+  // "Greenlight …" and four fields were indistinguishable. See the label note in
+  // greenlight-decision.field.ts for the full reasoning and the measurements.
+  label: 'Lead score',
   description:
-    'Deterministic lead quality score from 0 to 100, recomputed on every create and update. Empty means the lead has not been scored yet, or the run failed open.',
+    "Greenlight's deterministic lead quality score, 0 to 100, recomputed on every create and update. Empty means the lead has not been scored yet, or the run failed open.",
   type: FieldType.NUMBER,
   icon: 'IconGauge',
   objectUniversalIdentifier:

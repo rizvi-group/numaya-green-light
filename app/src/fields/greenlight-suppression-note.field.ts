@@ -31,7 +31,9 @@ export default defineField({
   universalIdentifier:
     LEAD_SUPPRESSION_FIELD_UNIVERSAL_IDENTIFIERS.greenlightSuppressionNote,
   name: 'greenlightSuppressionNote',
-  label: 'Do not contact note',
+  // See greenlight-suppression-reason.field.ts for why the satellites of the
+  // "Do not contact" flag are labelled "Block …".
+  label: 'Block note',
   description:
     'Free-text provenance for the block: where the request came from, who logged it, which campaign it followed. Cleared when the suppression is lifted — the permanent history is in the Greenlight audit log. Do not record anything here about the person that does not belong in a CRM column indefinitely.',
   type: FieldType.TEXT,

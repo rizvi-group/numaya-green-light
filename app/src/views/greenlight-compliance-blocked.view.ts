@@ -104,7 +104,9 @@ export default defineView({
         LEAD_SCORE_FIELD_UNIVERSAL_IDENTIFIERS.greenlightDecision,
       position: 1,
       isVisible: true,
-      size: 110,
+      // 120, not 110: a header shows `size` minus 28px, and "Gate decision"
+      // needs 85. See src/fields/greenlight-decision.field.ts.
+      size: 120,
     },
     {
       universalIdentifier:
@@ -131,7 +133,7 @@ export default defineView({
         LEAD_SCORE_FIELD_UNIVERSAL_IDENTIFIERS.greenlightScore,
       position: 4,
       isVisible: true,
-      size: 100,
+      size: 110,
     },
     {
       universalIdentifier:

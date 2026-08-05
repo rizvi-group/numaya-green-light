@@ -96,7 +96,9 @@ export default defineView({
       // here means the filter and the data disagree, which is worth seeing.
       position: 1,
       isVisible: true,
-      size: 110,
+      // 120, not 110: a header shows `size` minus 28px, and "Gate decision"
+      // needs 85. See src/fields/greenlight-decision.field.ts.
+      size: 120,
     },
     {
       universalIdentifier: NEVER_SCORED_VIEW_FIELD_UNIVERSAL_IDENTIFIERS.emails,

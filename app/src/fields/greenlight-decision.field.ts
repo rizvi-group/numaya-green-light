@@ -38,13 +38,82 @@ import { LEAD_SCORE_FIELD_UNIVERSAL_IDENTIFIERS } from 'src/constants/universal-
  * The order below is deliberately "held-ness ascending" rather than alphabetical:
  * Pass, Gate, Unscored, Blocked reads as the escalation it is, and Blocked last
  * is also the only position that does not renumber an existing option.
+ *
+ * ## Why no Greenlight field label begins with the word "Greenlight"
+ *
+ * This is the reference note for all ten Person fields the app owns.
+ *
+ * Twenty renders a record-page field label into a box that is exactly 90px wide
+ * — `width: 90px` on the wrapping div, not a percentage — at 11.96px Inter, and
+ * clamps it to one line with `-webkit-line-clamp: 1` over `white-space:
+ * pre-wrap`. That is a **word-boundary** clamp, not a character one: a label
+ * that does not fit loses whole trailing words. The word "Greenlight" measures
+ * 58px on its own, and "Greenlight score" measures just over the 90px budget, so
+ * *every* label of the form "Greenlight X" rendered as the single word
+ * "Greenlight …" no matter what X was. Score, decision, trace and enrichment all
+ * rendered identically on a scored record — the one screen a new user meets
+ * first — and the three "Do not contact X" labels all collapsed to "Do not
+ * contact …" for the same reason.
+ *
+ * Table column headers are a second, tighter surface: `<span>` with
+ * `text-overflow: ellipsis` at 13px Inter, and the usable width is the view
+ * field's `size` minus 28px for the icon and gutter. A 110px column gives 82px,
+ * which is less than the 90px the record page gives. Both surfaces had to be
+ * satisfied by the same string, so the labels below are sized against the
+ * tighter of the two and the view `size`s were raised where a label still would
+ * not clear the header.
+ *
+ * What was weighed against dropping the prefix, and what was checked rather than
+ * assumed on the live instance:
+ *
+ *   - **The prefix is what made these fields findable.** Verified: the filter /
+ *     field dropdown does *not* truncate — it renders the full label at natural
+ *     width — and its search matches the label only. Typing "greenlight" there
+ *     used to return the score and the decision; it now returns nothing. That is
+ *     the real cost of this change and it is accepted, because the prefix was
+ *     never legible on the two surfaces a rep actually reads, and because
+ *     Greenlight remains discoverable through the eight sidebar views that all
+ *     begin with "Greenlight", the "(Greenlight)" command-menu actions, and
+ *     Settings → Data model, which shows "Numaya Greenlight" in an App column
+ *     against every one of these fields.
+ *   - **A suffix — "Score (Greenlight)" — was measured and rejected.** In the
+ *     90px word-clamped box it renders as "Score …", which is worse than today:
+ *     it spends the whole budget on the parenthetical and still loses it.
+ *   - **`description` does not surface in the UI at all.** Checked on the record
+ *     page (absent from the DOM), on hover (absent), and in Settings → Data
+ *     model → People (the field list shows name, app and data type only). It is
+ *     documentation for whoever reads the metadata API, not a tooltip, so it
+ *     cannot carry meaning a truncated label lost. The descriptions here still
+ *     name Greenlight, for that reader.
+ *   - **The truncated label *is* recoverable on hover**, which is the one
+ *     mitigation Twenty does offer: the label div is wrapped in
+ *     `OverflowingTextWithTooltip`, and hovering a clamped label pops a portal
+ *     node carrying the full label text. It softens the bug and does not fix it
+ *     — two fields that render as the same eight characters cannot be told apart
+ *     without hovering both, and nothing on screen suggests there is anything to
+ *     hover.
+ *   - **Icons survive truncation completely** — they sit outside the 90px box
+ *     and are drawn at both surfaces. Every one of the ten fields carries a
+ *     distinct icon except the two enrichment fields, which share `IconSparkles`
+ *     as a family marker.
+ *
+ * So the labels are short, domain-worded, and chosen so that the first word
+ * already separates them: "Lead score" / "Gate decision" / "Score trace", "Do
+ * not contact" / "Block reason" / "Block note" / "Blocked since", "Enrich
+ * status" / "Last enriched" / "Sourced data". Each measures under 90px at the
+ * record-page font and under the header budget of its column, so none of them
+ * truncates anywhere.
+ *
+ * "Gate decision" rather than the bare "Decision": it names the thing the
+ * product does, and it is the same word as the "Greenlight Gate Queue" view the
+ * held leads land in, so the two read as one feature.
  */
 export default defineField({
   universalIdentifier: LEAD_SCORE_FIELD_UNIVERSAL_IDENTIFIERS.greenlightDecision,
   name: 'greenlightDecision',
-  label: 'Greenlight decision',
+  label: 'Gate decision',
   description:
-    'Gate outcome for this lead. Gated leads stay visible and can be released by a human at any time — the gate is advisory, never a hard block. Blocked is a compliance stop, such as a recorded opt-out: the lead is held and cannot be released by hand; correct the underlying data instead. Unscored means the run failed open and the lead passed through flagged.',
+    "Greenlight's gate outcome for this lead. Gated leads stay visible and can be released by a human at any time — the gate is advisory, never a hard block. Blocked is a compliance stop, such as a recorded opt-out: the lead is held and cannot be released by hand; correct the underlying data instead. Unscored means the run failed open and the lead passed through flagged.",
   type: FieldType.SELECT,
   icon: 'IconGavel',
   objectUniversalIdentifier:

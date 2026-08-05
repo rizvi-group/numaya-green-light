@@ -62,6 +62,11 @@ export default defineField({
   universalIdentifier:
     LEAD_SUPPRESSION_FIELD_UNIVERSAL_IDENTIFIERS.greenlightSuppressed,
   name: 'greenlightSuppressed',
+  // Unchanged, and deliberately so: it is the only one of the four suppression
+  // labels that already fitted the record page's 90px label box, and it is the
+  // one a rep must be able to read without hovering. Its three satellites moved
+  // to "Block …" so that they stop colliding with it — see
+  // greenlight-suppression-reason.field.ts.
   label: 'Do not contact',
   description:
     'On when this person must not be contacted: they unsubscribed, hard bounced, complained, were blocked by hand, made a legal request, or arrived on a do-not-contact import. Greenlight blocks the lead outright while this is on, and the block cannot be released by hand — clear this field instead. Edit it directly, or use the audited "Do not contact" action when the reason needs to be on record.',

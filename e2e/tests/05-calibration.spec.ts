@@ -143,7 +143,7 @@ test.describe('a licence delivers calibration that changes a score', () => {
       .filter({ hasText: /^Fields/ })
       .first();
 
-    await expect(fieldsPanel).toContainText('Greenlight score', {
+    await expect(fieldsPanel).toContainText('Lead score', {
       timeout: 60_000,
     });
     await expect(fieldsPanel).toContainText(String(subject.greenlightScore));

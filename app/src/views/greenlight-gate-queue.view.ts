@@ -105,7 +105,11 @@ export default defineView({
         LEAD_SCORE_FIELD_UNIVERSAL_IDENTIFIERS.greenlightScore,
       position: 1,
       isVisible: true,
-      size: 100,
+      // A column header shows `size` minus 28px of icon and gutter. "Lead score"
+      // needs 69px, so 100 would have cleared it by seven pixels — one character
+      // — on a machine that has Inter. 110 is the same margin the other columns
+      // carry. See the label note in src/fields/greenlight-decision.field.ts.
+      size: 110,
     },
     {
       universalIdentifier:
@@ -114,7 +118,9 @@ export default defineView({
         LEAD_SCORE_FIELD_UNIVERSAL_IDENTIFIERS.greenlightDecision,
       position: 2,
       isVisible: true,
-      size: 110,
+      // 110 left 82px for the header text and "Gate decision" needs 85, so this
+      // column truncated its own heading. 120 clears it.
+      size: 120,
     },
     {
       universalIdentifier: GATE_QUEUE_VIEW_FIELD_UNIVERSAL_IDENTIFIERS.jobTitle,

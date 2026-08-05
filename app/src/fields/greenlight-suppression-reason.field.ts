@@ -43,7 +43,14 @@ export default defineField({
   universalIdentifier:
     LEAD_SUPPRESSION_FIELD_UNIVERSAL_IDENTIFIERS.greenlightSuppressionReason,
   name: 'greenlightSuppressionReason',
-  label: 'Do not contact reason',
+  // "Block reason", not "Do not contact reason". All three satellites of the
+  // flag used to open with the same fourteen characters, and the record page
+  // clamps a label to 90px on a word boundary, so they rendered as three
+  // identical "Do not contact …" rows. The flag itself keeps its name — it fits,
+  // and it is the one that has to be unmissable — while its satellites take the
+  // block-list vocabulary these descriptions have always used. See the label
+  // note in greenlight-decision.field.ts.
+  label: 'Block reason',
   description:
     'Why this person is on the Greenlight block list. Set alongside "Do not contact" — a reason recorded here blocks the lead even if the flag is cleared, so remove both together when lifting a suppression.',
   type: FieldType.SELECT,
