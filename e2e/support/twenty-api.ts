@@ -55,6 +55,17 @@ export type PersonInput = {
   jobTitle?: string;
   /** Links the lead to a Company. Enrichment searches on the employer's name. */
   companyId?: string;
+  /**
+   * The reachability rules score a phone as well as an email, so a fixture that
+   * has to reach the top of a lane — a demo card, rather than an assertion —
+   * needs one. Optional, and no existing fixture passes it.
+   */
+  phones?: {
+    primaryPhoneNumber: string;
+    primaryPhoneCallingCode: string;
+    primaryPhoneCountryCode: string;
+  };
+  linkedinLink?: { primaryLinkUrl: string };
 };
 
 export type ScoredPerson = {
@@ -479,6 +490,61 @@ export const deleteOpportunity = async (id: string): Promise<void> => {
     `mutation Del($id: UUID!) { deleteOpportunity(id: $id) { id } }`,
     { id },
   );
+};
+
+/* -------------------------------------------------------------------------- *
+ * Notes attached to a deal.
+ *
+ * The Screening→Meeting criterion is "a discovery call was logged", and
+ * `default-role.ts` refused `calendarEvent` in order to answer it from a Task or
+ * a Note a human deliberately attached to the deal. Every fixture the suite had
+ * until now exercised the *unmet* side of that; a fixture that satisfies it
+ * needs a real Note and a real link, which is what these two write.
+ *
+ * `noteTarget` links through a MORPH_RELATION, so the input field is
+ * `targetOpportunityId` and not `opportunityId` — measured against the
+ * container's own metadata, where `opportunityId` does not exist and the
+ * mutation is rejected by name.
+ * -------------------------------------------------------------------------- */
+
+export const createNote = async (title: string): Promise<string> => {
+  const result = await call<{ createNote: { id: string } }>(
+    'graphql',
+    `mutation Create($data: NoteCreateInput!) { createNote(data: $data) { id } }`,
+    { data: { title } },
+  );
+
+  return result.createNote.id;
+};
+
+/** Attach an existing Note to an Opportunity. Returns the link's own id. */
+export const attachNoteToOpportunity = async (
+  noteId: string,
+  opportunityId: string,
+): Promise<string> => {
+  const result = await call<{ createNoteTarget: { id: string } }>(
+    'graphql',
+    `mutation Create($data: NoteTargetCreateInput!) {
+       createNoteTarget(data: $data) { id }
+     }`,
+    { data: { noteId, targetOpportunityId: opportunityId } },
+  );
+
+  return result.createNoteTarget.id;
+};
+
+export const deleteNoteTarget = async (id: string): Promise<void> => {
+  await call(
+    'graphql',
+    `mutation Del($id: UUID!) { deleteNoteTarget(id: $id) { id } }`,
+    { id },
+  );
+};
+
+export const deleteNote = async (id: string): Promise<void> => {
+  await call('graphql', `mutation Del($id: UUID!) { deleteNote(id: $id) { id } }`, {
+    id,
+  });
 };
 
 /** An Opportunity, with the five fields the board writes onto it. */

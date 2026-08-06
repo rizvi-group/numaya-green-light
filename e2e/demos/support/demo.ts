@@ -348,6 +348,37 @@ export const spotlightUnion = async (
   }
 };
 
+/**
+ * Ring an explicit rectangle, without scrolling anything to reach it.
+ *
+ * `spotlight` scrolls its target into view, which is right for a card and wrong
+ * for an element that is taller than the page: the pipeline board's handoff line
+ * is a full-height column, its label sits at the vertical centre of fifteen
+ * thousand pixels of lane, and asking the browser to bring that label into view
+ * scrolls the board to its own middle — headers gone, half the lanes apparently
+ * empty. The caller works out the box it wants ringed and passes it here.
+ */
+export const spotlightBox = async (
+  page: Page,
+  box: { x: number; y: number; w: number; h: number },
+  holdMs = 0,
+): Promise<void> => {
+  await withDemo(
+    page,
+    (value: { x: number; y: number; w: number; h: number }) => {
+      const demo = (window as unknown as Record<string, unknown>)['__glDemo'] as
+        | DemoApi
+        | undefined;
+      demo?.ring(value);
+    },
+    box,
+  );
+
+  if (holdMs > 0) {
+    await page.waitForTimeout(holdMs);
+  }
+};
+
 export const clearSpotlight = async (page: Page): Promise<void> => {
   await withDemo(
     page,
