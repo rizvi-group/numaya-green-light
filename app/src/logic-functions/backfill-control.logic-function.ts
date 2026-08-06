@@ -7,6 +7,7 @@ import {
   BACKFILL_ROUTE_PATH,
 } from 'src/constants/backfill-identifiers';
 import { parseBackfillCommand } from 'src/backfill/backfill-command';
+import { resolveActorDisplayName } from 'src/logic-functions/actor-identity';
 import {
   readBackfillStatus,
   startBackfill,
@@ -35,9 +36,16 @@ import { kvBackfillStateStore } from 'src/logic-functions/backfill-state-store';
  *
  * `userWorkspaceId` comes off the authenticated request, so it is server-derived
  * and cannot be asserted by the caller — the same limitation and the same
- * reasoning as the release and suppression actions. It is what lands in the run's
- * `requestedBy` and in the audit row, so "who started the re-score that changed
- * four hundred decisions" has an answer.
+ * reasoning as the release and suppression actions, and `resolveActorDisplayName`
+ * turns it into that person's name without ever reading the body. It is what
+ * lands in the run's `requestedBy` and in the audit row, so "who started the
+ * re-score that changed four hundred decisions" has an answer with a name in it.
+ *
+ * Resolved once, before the branch, and passed to whichever action runs. The
+ * run's `requestedBy` is then stamped once into durable state and carried by
+ * every row the run goes on to write, so a backfill over a whole workspace
+ * resolves the actor exactly once no matter how many thousands of records it
+ * touches — which is the constraint that ruled out doing this per row.
  *
  * ## Nothing here is trusted
  *
@@ -47,11 +55,6 @@ import { kvBackfillStateStore } from 'src/logic-functions/backfill-state-store';
  * something this server does not implement should be told, not quietly given
  * something else.
  */
-const actorFor = (event: RoutePayload): string =>
-  event.userWorkspaceId === null || event.userWorkspaceId === undefined
-    ? 'Unidentified workspace member'
-    : `Workspace member ${event.userWorkspaceId}`;
-
 const handler = async (event: RoutePayload) => {
   const parsed = parseBackfillCommand(event.body);
 
@@ -73,15 +76,22 @@ const handler = async (event: RoutePayload) => {
     now: new Date(),
   };
 
+  // `status` is the panel's polling action and writes nothing, so it does not
+  // pay for a name it would never put anywhere.
+  const requestedBy =
+    parsed.command.action === 'start' || parsed.command.action === 'stop'
+      ? await resolveActorDisplayName(event)
+      : '';
+
   const result =
     parsed.command.action === 'start'
       ? await startBackfill({
           ...deps,
           mode: parsed.command.mode,
-          requestedBy: actorFor(event),
+          requestedBy,
         })
       : parsed.command.action === 'stop'
-        ? await stopBackfill({ ...deps, requestedBy: actorFor(event) })
+        ? await stopBackfill({ ...deps, requestedBy })
         : await readBackfillStatus(deps);
 
   return new Response(result.body, { status: result.status });

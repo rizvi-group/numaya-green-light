@@ -8,6 +8,7 @@ import {
   PIPELINE_ROUTE_PATH,
 } from 'src/constants/pipeline-identifiers';
 import { readEnrichmentEnvironment } from 'src/enrichment';
+import { resolveActorDisplayName } from 'src/logic-functions/actor-identity';
 import {
   createReasoningPort,
   createSearchPort,
@@ -45,10 +46,13 @@ import { runPersonScoring } from 'src/logic-functions/scoring-run';
  * ## Identity
  *
  * `userWorkspaceId` comes off the authenticated request, so it is server-derived
- * and cannot be asserted by the caller — the same limitation and the same
- * reasoning as the release, suppression, backfill and ICP actions. It is what
- * lands in the audit row every move writes, so "who moved this deal to Proposal
- * with two criteria outstanding" has an answer.
+ * and cannot be asserted by the caller — the same guarantee and the same
+ * reasoning as the release, suppression, backfill and ICP actions.
+ * `resolveActorDisplayName` turns it into the person's name without ever seeing
+ * the body, and it is what lands in the audit row every move writes, so "who
+ * moved this deal to Proposal with two criteria outstanding" has an answer with
+ * a name in it. Resolved once here and passed down as `actor`, because an
+ * `advise` over a full board can write a row per card.
  *
  * ## The three ports
  *
@@ -90,11 +94,6 @@ import { runPersonScoring } from 'src/logic-functions/scoring-run';
  * board — the chain writes the record before it spends anything.
  */
 
-const actorFor = (event: RoutePayload): string =>
-  event.userWorkspaceId === null || event.userWorkspaceId === undefined
-    ? 'Unidentified workspace member'
-    : `Workspace member ${event.userWorkspaceId}`;
-
 /**
  * The wording agent, reduced to `prompt -> text | null`.
  *
@@ -129,11 +128,12 @@ const handler = async (event: RoutePayload) => {
 
   const client = new CoreApiClient();
   const now = new Date();
+  const actor = await resolveActorDisplayName(event);
 
   const outcome = await runPipelineCommand(parsed.request, {
     client,
     now,
-    actor: actorFor(event),
+    actor,
     narrative: narrativePort,
     enrich: async (leadRecordId) => {
       await runLeadEnrichment(

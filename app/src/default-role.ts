@@ -24,13 +24,45 @@ import {
  * | `note` / `noteTarget`| yes  | no    | Same, for the "a note since the meeting" criterion.                      |
  * | `greenlightConfig`   | yes  | yes   | Read on every run; created at install and patched on upgrade.            |
  * | `greenlightAuditLog` | yes  | yes   | Every decision appends a row.                                            |
+ * | `workspaceMember`    | no   | no    | Refused. The actor on an audit row is resolved without it — see below.   |
  *
  * Nothing else. The previous `canReadAllObjectRecords: true` granted read over
  * every object in the workspace — messages, calendar events, connected
  * accounts, API keys, workspace members — to a function that only ever wanted
  * `Person.jobTitle`.
  *
- * ## Two grants that were argued down rather than added
+ * ## Three grants that were argued down rather than added
+ *
+ * **`workspaceMember` is deliberately absent, and the audit log names people
+ * anyway.** Every human-triggered action writes an actor into
+ * `GreenlightAuditLog`, and until recently that actor was the raw
+ * `userWorkspaceId` off the request — `Workspace member 20202020-9e3b-…`, which
+ * answers none of the questions an audit trail is kept to answer. The obvious
+ * fix is to grant read on `workspaceMember` and look the name up.
+ *
+ * It is also the wrong fix, for the same reason the calendar is refused below.
+ * That grant is read over the customer's entire staff directory — every
+ * colleague's name, work address, job title and avatar — handed to a scoring app
+ * so that one row can say "Priya Raman" instead of a UUID. The exposure is the
+ * whole directory; the need is one name, and specifically the name of the person
+ * who is already making the request.
+ *
+ * The narrower option exists and is what ships. `currentUser` on the **metadata**
+ * API returns the identity of whoever authenticated the call — and nothing else.
+ * It is not an object query, it is not reached through `objectPermissions`, it
+ * cannot be pointed at a colleague and it cannot enumerate anybody: the caller is
+ * the only row it will ever return. So Greenlight resolves the actor from the
+ * request's own identity, keeps a directory grant it never had, and the audit row
+ * gains a name. See `src/logic-functions/actor-identity.ts`, which also records
+ * that this was verified against a live instance rather than assumed — the
+ * earlier decision to ship the UUID rested on the lookup's shape being
+ * undocumented, which is a reason to go and check.
+ *
+ * What that costs, stated rather than glossed: `currentUser` resolves the caller
+ * and nobody else, so a row can only ever name the person who caused it. Any
+ * future feature that wants to name a *different* member — "assigned to", "last
+ * reviewed by" — would need this grant, and would have to make its own case here
+ * rather than inherit one.
  *
  * **`calendarEvent` is deliberately absent.** PIPELINE_SPEC.md's exit-criteria
  * table originally read "a discovery call logged (Twenty Task or CalendarEvent
@@ -59,10 +91,12 @@ import {
  * company record a human already curated. That is a weaker guarantee than a
  * permission bit and it is named as weaker on purpose.
  *
- * Twenty bundles create with update: `ObjectPermissionManifest` exposes
- * read / update / softDelete / destroy and no separate create flag, so
- * `canUpdateObjectRecords` is what lets the hook create the config record and
- * the scoring run append an audit row.
+ * ## Create, and delete
+ *
+ * `ObjectPermissionManifest` exposes read / update / softDelete / destroy and no
+ * separate create flag, so `canUpdateObjectRecords` is what lets the post-install
+ * hook create the config record, the scoring run append an audit row, and capture
+ * insert a Person.
  *
  * Delete is off everywhere. Greenlight has no delete path: gating never removes
  * a lead (that is the product's central promise), the audit log is append-only,

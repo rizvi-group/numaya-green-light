@@ -7,6 +7,7 @@ import {
   ICP_ROUTE_PATH,
 } from 'src/constants/icp-identifiers';
 import { parseIcpCommand } from 'src/icp/icp-command';
+import { resolveActorDisplayName } from 'src/logic-functions/actor-identity';
 import { runIcpCommand } from 'src/logic-functions/icp-run';
 import { kvBackfillStateStore } from 'src/logic-functions/backfill-state-store';
 
@@ -30,9 +31,15 @@ import { kvBackfillStateStore } from 'src/logic-functions/backfill-state-store';
  *
  * `userWorkspaceId` comes off the authenticated request, so it is server-derived
  * and cannot be asserted by the caller — the same limitation and the same
- * reasoning as the release, suppression and backfill actions. It is what lands in
- * the audit row, so "who narrowed the profile that started gating half the
- * pipeline" has an answer.
+ * reasoning as the release, suppression and backfill actions, and
+ * `resolveActorDisplayName` turns it into that person's name without ever
+ * reading the body. It is what lands in the audit row, so "who narrowed the
+ * profile that started gating half the pipeline" has an answer with a name in
+ * it.
+ *
+ * Resolved once here and carried through `requestedBy`. An `apply` can queue a
+ * re-score of the whole workspace behind it, and every row that run writes reads
+ * this one string rather than asking again.
  *
  * ## Timeout
  *
@@ -43,11 +50,6 @@ import { kvBackfillStateStore } from 'src/logic-functions/backfill-state-store';
  * which is the property that matters: a hung propose has to end in an error
  * message, not in a spinner nobody can interpret.
  */
-const actorFor = (event: RoutePayload): string =>
-  event.userWorkspaceId === null || event.userWorkspaceId === undefined
-    ? 'Unidentified workspace member'
-    : `Workspace member ${event.userWorkspaceId}`;
-
 const handler = async (event: RoutePayload) => {
   const parsed = parseIcpCommand(event.body);
 
@@ -72,7 +74,7 @@ const handler = async (event: RoutePayload) => {
     client: new CoreApiClient(),
     store: kvBackfillStateStore,
     now: new Date(),
-    requestedBy: actorFor(event),
+    requestedBy: await resolveActorDisplayName(event),
   });
 
   return new Response(outcome.body, { status: outcome.status });

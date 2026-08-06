@@ -6,6 +6,7 @@ import {
   UNSUPPRESS_LEAD_LOGIC_FUNCTION_UNIVERSAL_IDENTIFIER,
   UNSUPPRESS_LEAD_ROUTE_PATH,
 } from 'src/constants/gate-queue-identifiers';
+import { resolveActorDisplayName } from 'src/logic-functions/actor-identity';
 import { runUnsuppressLead } from 'src/logic-functions/suppression-run';
 
 /**
@@ -35,18 +36,21 @@ import { runUnsuppressLead } from 'src/logic-functions/suppression-run';
  * in `src/gate/release-decision.ts`). This clears the underlying *data*, and the
  * lead then re-scores and clears itself through evidence — which is exactly the
  * escape hatch that file describes as the only legitimate one.
+ *
+ * ## Identity
+ *
+ * "Who lifted them" is half of the question above, and until now the row
+ * answered it with `Workspace member <uuid>` — which is to say it did not answer
+ * it. `resolveActorDisplayName` resolves the name from the request's own
+ * authenticated identity, never from its body; a workspace whose lifted
+ * legal-request blocks all name the same unreadable id has a list, not a trail.
  */
-const actorDisplayNameFor = (event: RoutePayload): string =>
-  event.userWorkspaceId === null || event.userWorkspaceId === undefined
-    ? 'Unidentified workspace member'
-    : `Workspace member ${event.userWorkspaceId}`;
-
 const handler = async (event: RoutePayload) => {
   const result = await runUnsuppressLead({
     client: new CoreApiClient(),
     body: event.body,
     now: new Date(),
-    actorDisplayName: actorDisplayNameFor(event),
+    actorDisplayName: await resolveActorDisplayName(event),
   });
 
   return new Response(result.body, { status: result.status });

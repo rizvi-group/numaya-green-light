@@ -96,6 +96,22 @@ const ADVISE_NAME = { firstName: 'GreenlightE2E', lastName: `Advise${stamp}` };
 const displayName = (name: { firstName: string; lastName: string }): string =>
   `${name.firstName} ${name.lastName}`;
 
+/**
+ * What "the row names a person" looks like.
+ *
+ * These assertions used to read `/^Workspace member /` — they passed, and they
+ * were pinning the defect: every audit row named a UUID and nothing in the suite
+ * objected. The row now reads `Priya Raman (workspace member <uuid>)`, and the
+ * shape below is asserted rather than the seeded member's actual name, because
+ * the claim under test is that *a* person is named and stays traceable to an
+ * account, not that this container happens to be signed in as Tim Apple.
+ *
+ * The leading group deliberately refuses to match an empty name and refuses the
+ * old string, so a silent regression to the id-only form fails here.
+ */
+const NAMED_ACTOR =
+  /^\S.*\S \(workspace member [0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\)$/;
+
 const FIXTURE_COMPANY = `${TAG} Fixture Co`;
 const FIXTURE_DOMAIN = `fixture-${stamp}.example`;
 
@@ -385,6 +401,37 @@ test('the board paints nine lanes in order, with the handoff line between them',
     handoffBox!.x,
     'the handoff line must be drawn before New',
   ).toBeLessThanOrEqual(brandNew!.x);
+
+  /* …and readable without scrolling, however tall the lanes are. -------------- */
+  //
+  // `toBeVisible()` above is not this assertion and was never going to be:
+  // Playwright's definition is "in the layout with a non-empty box", which a
+  // caption seven and a half thousand pixels below the fold satisfies happily.
+  // That is how the caption spent two rounds of demo recording centred in a
+  // divider column as tall as the tallest lane, unreachable on any workspace
+  // with real pipeline in it, with this suite green.
+  //
+  // So the real claim is asserted instead: on a board whose lanes are taller
+  // than the window, the label is still inside the window before anybody
+  // scrolls. The guard on the lane height keeps this honest — on a board that
+  // fits on screen the assertion would pass for the wrong reason, so the case
+  // is only exercised when there is actually something to fail.
+  const viewport = page.viewportSize();
+
+  expect(viewport).not.toBeNull();
+
+  if (qualified!.height > viewport!.height) {
+    expect(
+      handoffBox!.y,
+      'the handoff caption must start inside the window, not below the fold',
+    ).toBeGreaterThanOrEqual(0);
+    expect(
+      handoffBox!.y + handoffBox!.height,
+      'the whole handoff caption must be readable without scrolling — it is ' +
+        'the single most important idea on the board, and scrolling to it ' +
+        'takes the lane headers off screen',
+    ).toBeLessThanOrEqual(viewport!.height);
+  }
 
   /* Lane headers carry the true total, not the length of the page they show. -- */
   const totals = await readBoardTotals();
@@ -839,7 +886,11 @@ test('handing a Qualified card across the line opens exactly one opportunity', a
     )
     .toBe('HANDED_OFF');
 
-  expect(handoffAuditRow?.actorDisplayName).toMatch(/^Workspace member /);
+  expect(
+    handoffAuditRow?.actorDisplayName,
+    'the row must name the person who handed the lead off, and stay traceable ' +
+      'to their account — this used to assert a bare UUID, which is the defect',
+  ).toMatch(NAMED_ACTOR);
 
   await page.screenshot({ path: 'shots/07-handoff-done.png', fullPage: true });
   await expectNoFailures(page);
@@ -950,8 +1001,8 @@ test('moving with a criterion outstanding names it first, then records the overr
 
   expect(
     stageMoveAuditRow!.actorDisplayName,
-    'the row must name who went ahead',
-  ).toMatch(/^Workspace member /);
+    'the row must name who went ahead — a name, not only an id',
+  ).toMatch(NAMED_ACTOR);
   expect(
     reason,
     'the row must stand alone: the actor is named in the reason as well as in ' +

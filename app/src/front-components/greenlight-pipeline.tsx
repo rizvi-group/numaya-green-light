@@ -1046,20 +1046,65 @@ const Notices = ({
  * product where Greenlight stops describing a person and starts describing a
  * deal, and where the only Opportunity this app ever creates gets created. A
  * rule nobody can read is a rule nobody learns.
+ *
+ * ## The defect this closes: the label was centred, and the centre moved
+ *
+ * The caption used to be vertically centred in the column — `alignItems:
+ * 'center'` — which reads perfectly on the board a developer builds against,
+ * where every lane holds three cards and the column is 400px tall.
+ *
+ * It is wrong on a real workspace, and measurably so. Measured on the dev
+ * container with 61 cards in Qualified: the divider column renders 15,280px
+ * tall, and the centred caption sat at y=7,670 — around seven and a half
+ * thousand pixels below the fold, in a viewport 865px high. The one idea the
+ * board exists to teach was reachable only by scrolling to the middle of the
+ * board, at which point the lane headers have gone and there is nothing left on
+ * screen to tell you which lanes the line is between. A rule nobody can read is
+ * a rule nobody learns, and centring made the rule unreadable in exactly the
+ * workspaces that have enough pipeline to need it.
+ *
+ * ## Why the top of the column, and not sticky to the viewport
+ *
+ * Sticky was tried first and cannot work here without breaking something worse.
+ * `position: sticky` resolves against the nearest scrolling ancestor, and the
+ * two ancestors between this column and the page's scroll wrapper are both
+ * scroll containers by necessity: the lane strip carries `overflowX: 'auto'`,
+ * which is what confines the nine-lane board's sideways scroll instead of
+ * letting the page body scroll horizontally, and the root hides its own
+ * overflow. Sticky therefore pins to the top of the *strip*, not to the top of
+ * the window.
+ *
+ * Which is the right place anyway, and is what this now does directly. The top
+ * of the strip is the lane-header band: the caption sits level with "Qualified"
+ * and "New", the two lanes it is the boundary between, so it is read together
+ * with them and it is on screen the moment the board paints, at every lane
+ * height from zero cards to sixty. `top: 0` is kept so that the day the widget
+ * gets a genuine bounded height — a canvas tab that actually constrains, a
+ * future layout — the label follows the strip instead of scrolling out of it.
+ *
+ * The dashed rule still runs the whole height of the tallest lane. That is the
+ * half of this element that should be long: the boundary is true all the way
+ * down, and the words explaining it need to be somewhere a person will pass.
  */
 const HandoffLine = () => (
   <div
     style={{
       display: 'flex',
+      flexDirection: 'column',
       flex: '0 0 34px',
       alignItems: 'center',
-      justifyContent: 'center',
+      justifyContent: 'flex-start',
+      minHeight: 0,
       borderLeft: `2px dashed ${GO}88`,
       marginLeft: '6px',
     }}
   >
     <span
       style={{
+        position: 'sticky',
+        top: 0,
+        // Level with the lane headers, which carry `10px 12px` of padding.
+        paddingTop: '10px',
         writingMode: 'vertical-rl',
         color: GO,
         fontSize: '11px',

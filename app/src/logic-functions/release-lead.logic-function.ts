@@ -18,6 +18,7 @@ import {
   type ReleaseMarker,
   type ReleaseRequest,
 } from 'src/gate/release-decision';
+import { resolveActorDisplayName } from 'src/logic-functions/actor-identity';
 
 /**
  * Path 4 of ARCHITECTURE.md — the human override that releases a held lead.
@@ -213,20 +214,31 @@ const writeMarker = async (
 /* -------------------------------------------------------------------------- */
 
 /**
- * Who did it.
+ * Who did it — by name, and this is the row where that matters most.
  *
  * `userWorkspaceId` comes off the authenticated request, so it is server-derived
- * and not something the caller can assert. It is not a friendly name — resolving
- * one needs a workspace-member lookup whose API shape is not documented for
- * app-scoped tokens, and a wrong guess here would break every override. The row
- * still identifies the individual uniquely, which is what the audit trail needs;
- * Twenty's own `createdBy` on the row carries the API-caller identity alongside.
+ * and not something the caller can assert. That has always been true here. What
+ * was not true was the conclusion this comment used to draw from it: that a
+ * friendly name "needs a workspace-member lookup whose API shape is not
+ * documented for app-scoped tokens, and a wrong guess here would break every
+ * override", so the row would carry the raw id instead and Twenty's own
+ * `createdBy` would have to do the rest.
+ *
+ * Every clause of that is defensible except the last step. This row is the
+ * GDPR Art. 22 evidence that a *human* overruled an automated decision, and the
+ * question it is produced to answer — months later, to somebody who was not
+ * there — is "who released this lead, and why". `Workspace member
+ * 20202020-9e3b-…` answers neither, and the id in it was not even the one an
+ * admin can look up: `userWorkspaceId` identifies the membership row, not the
+ * member. An undocumented API surface is a reason to verify it against a live
+ * instance, which took one deploy, not a reason to ship a UUID.
+ *
+ * `resolveActorDisplayName` now does the lookup — from the request's own
+ * identity and never from its body — and falls back to exactly the string above
+ * if it cannot. See `src/logic-functions/actor-identity.ts` for why it needs no
+ * new permission, and `src/identity/actor.ts` for why the id stays in the
+ * string next to the name.
  */
-const actorDisplayNameFor = (event: RoutePayload): string =>
-  event.userWorkspaceId === null || event.userWorkspaceId === undefined
-    ? 'Unidentified workspace member'
-    : `Workspace member ${event.userWorkspaceId}`;
-
 const handler = async (event: RoutePayload) => {
   const parsed = parseReleaseRequest(event.body);
 
@@ -269,6 +281,10 @@ const handler = async (event: RoutePayload) => {
   const now = new Date();
   const marker = await readMarker(request);
   const decision = decideRelease({ request, lead, marker, now });
+  // Once, and reused by both the audit row and the release marker. They are two
+  // records of one act by one person, and they must not be able to disagree
+  // about who that was.
+  const actor = await resolveActorDisplayName(event);
 
   if (decision.shouldClearGate) {
     try {
@@ -296,7 +312,7 @@ const handler = async (event: RoutePayload) => {
         leadRecordId: request.recordId,
         leadDisplayName: lead.displayName,
         actorType: 'HUMAN',
-        actorDisplayName: actorDisplayNameFor(event),
+        actorDisplayName: actor,
         ruleTrace: lead.trace ?? { rules: [] },
         score: lead.score,
         // Carried out of the trace rather than left to the field's UNSCORED
@@ -335,7 +351,7 @@ const handler = async (event: RoutePayload) => {
       leadObjectNameSingular: request.leadObjectNameSingular,
       recordId: request.recordId,
       releasedAt: now.toISOString(),
-      releasedBy: actorDisplayNameFor(event),
+      releasedBy: actor,
       reasonCode: request.reasonCode,
     });
   }

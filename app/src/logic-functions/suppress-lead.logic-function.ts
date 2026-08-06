@@ -6,6 +6,7 @@ import {
   SUPPRESS_LEAD_LOGIC_FUNCTION_UNIVERSAL_IDENTIFIER,
   SUPPRESS_LEAD_ROUTE_PATH,
 } from 'src/constants/gate-queue-identifiers';
+import { resolveActorDisplayName } from 'src/logic-functions/actor-identity';
 import { runSuppressLead } from 'src/logic-functions/suppression-run';
 
 /**
@@ -28,21 +29,18 @@ import { runSuppressLead } from 'src/logic-functions/suppression-run';
  * ## Identity
  *
  * `userWorkspaceId` comes off the authenticated request, so it is server-derived
- * and cannot be asserted by the caller. Same limitation and same reasoning as the
- * release override: it is not a friendly name, but it identifies the individual
- * uniquely, which is what the audit trail needs.
+ * and cannot be asserted by the caller, and `resolveActorDisplayName` turns it
+ * into that person's name without ever reading the body. Same guarantee and same
+ * reasoning as the release override — and the same correction: the row used to
+ * carry the bare id, which told a later reader of the block list nothing about
+ * who added somebody to it.
  */
-const actorDisplayNameFor = (event: RoutePayload): string =>
-  event.userWorkspaceId === null || event.userWorkspaceId === undefined
-    ? 'Unidentified workspace member'
-    : `Workspace member ${event.userWorkspaceId}`;
-
 const handler = async (event: RoutePayload) => {
   const result = await runSuppressLead({
     client: new CoreApiClient(),
     body: event.body,
     now: new Date(),
-    actorDisplayName: actorDisplayNameFor(event),
+    actorDisplayName: await resolveActorDisplayName(event),
   });
 
   return new Response(result.body, { status: result.status });
