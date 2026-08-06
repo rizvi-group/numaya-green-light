@@ -608,43 +608,90 @@ const discoveryCallLogged = define({
       };
     }
 
-    if (opportunity === null || !wasRead(opportunity.lastDiscoveryCallAt)) {
+    // Tasks *and* notes, which is what PIPELINE_SPEC.md says and what this
+    // criterion read only half of until an end-to-end test asked it directly.
+    //
+    // The half was not an arbitrary omission, it was the load-bearing half of an
+    // argument made elsewhere. `src/default-role.ts` refuses to read
+    // `calendarEvent` — answering "has a discovery call happened" from the
+    // workspace calendar means reading every meeting in the business to produce
+    // one boolean about one deal — and the whole justification for that refusal
+    // is that **Task and Note between them** answer the same question from
+    // records a human deliberately attached to the deal. Reading tasks alone
+    // took the privacy win and then quietly gave up a third of the coverage it
+    // was traded for: a rep who writes up a call as a note rather than ticking a
+    // task was told nobody had spoken to the account.
+    if (
+      opportunity === null ||
+      (!wasRead(opportunity.lastDiscoveryCallAt) && !wasRead(opportunity.lastNoteAt))
+    ) {
       return {
         status: 'indeterminate',
-        evidence: 'no calls or meetings were loaded for this deal',
+        evidence: 'no tasks or notes were loaded for this deal',
       };
     }
 
-    const raw = opportunity.lastDiscoveryCallAt;
+    // Read separately rather than folded into one "latest activity", because
+    // they are not interchangeable in the one place that matters. A task carries
+    // `dueAt` and can therefore be in the *future* — a call in the diary for next
+    // Tuesday is not a call that happened, and that distinction is this
+    // criterion's entire reason for existing. A note is written after the fact
+    // and has no future form. Collapsing them would let a booked-but-unheld call
+    // reach Meeting the moment somebody also left a note.
+    const call = wasRead(opportunity.lastDiscoveryCallAt)
+      ? parseDate(opportunity.lastDiscoveryCallAt)
+      : null;
+    const note = wasRead(opportunity.lastNoteAt)
+      ? parseDate(opportunity.lastNoteAt)
+      : null;
 
-    if (trimmed(raw) === '') {
+    const held = [call, note].filter(
+      (when): when is Date => when !== null && when.getTime() <= now.getTime(),
+    );
+
+    if (held.length > 0) {
+      const latest = held.reduce((left, right) =>
+        left.getTime() >= right.getTime() ? left : right,
+      );
+
+      return {
+        status: 'met',
+        // Named by kind, not by "activity". An admin auditing why a deal was
+        // allowed to advance needs to know whether somebody logged a call or
+        // merely left a note, and those are different levels of evidence for the
+        // same claim.
+        evidence:
+          call !== null && latest.getTime() === call.getTime()
+            ? `discovery call logged ${formatDay(latest)}`
+            : `a note was written up ${formatDay(latest)}`,
+      };
+    }
+
+    if (call !== null) {
+      // Every date we have is in the future, so the only one that can be is the
+      // task: notes are never future-dated.
       return {
         status: 'unmet',
-        evidence: 'no discovery call is logged against this deal',
-        sentence: `Get the discovery call with ${company(snapshot)} in the diary. Nothing on this record says anyone has spoken to them yet.`,
+        evidence: `discovery call booked for ${formatDay(call)}, which has not happened yet`,
+        sentence: `The discovery call with ${company(snapshot)} is booked for ${formatDay(call)} and has not happened yet. Hold the card here until it has.`,
       };
     }
 
-    const when = parseDate(raw);
+    const unreadable = [opportunity.lastDiscoveryCallAt, opportunity.lastNoteAt]
+      .filter((raw) => wasRead(raw) && trimmed(raw) !== '')
+      .filter((raw) => parseDate(raw) === null);
 
-    if (when === null) {
+    if (unreadable.length > 0) {
       return {
         status: 'indeterminate',
-        evidence: `the logged call date (${trimmed(raw)}) could not be read`,
-      };
-    }
-
-    if (when.getTime() > now.getTime()) {
-      return {
-        status: 'unmet',
-        evidence: `discovery call booked for ${formatDay(when)}, which has not happened yet`,
-        sentence: `The discovery call with ${company(snapshot)} is booked for ${formatDay(when)} and has not happened yet. Hold the card here until it has.`,
+        evidence: `the logged activity date (${trimmed(unreadable[0])}) could not be read`,
       };
     }
 
     return {
-      status: 'met',
-      evidence: `discovery call logged ${formatDay(when)}`,
+      status: 'unmet',
+      evidence: 'no discovery call or write-up is logged against this deal',
+      sentence: `Get the discovery call with ${company(snapshot)} in the diary. Nothing on this record says anyone has spoken to them yet.`,
     };
   },
 });

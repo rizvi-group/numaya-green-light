@@ -168,13 +168,23 @@ export const deletePerson = async (id: string): Promise<void> => {
  * and the run never reaches a provider. Every enrichment fixture therefore needs
  * a real, findable company behind it.
  */
-export const createCompany = async (name: string): Promise<string> => {
+export const createCompany = async (
+  name: string,
+  options: { domainName?: string } = {},
+): Promise<string> => {
   const result = await call<{ createCompany: { id: string } }>(
     'graphql',
     `mutation Create($data: CompanyCreateInput!) {
        createCompany(data: $data) { id }
      }`,
-    { data: { name } },
+    {
+      data: {
+        name,
+        ...(options.domainName === undefined
+          ? {}
+          : { domainName: { primaryLinkUrl: options.domainName } }),
+      },
+    },
   );
 
   return result.createCompany.id;
@@ -335,6 +345,64 @@ export const readAuditRowsForLead = async (
   return result.greenlightAuditLogs.edges.map((edge) => edge.node);
 };
 
+/**
+ * Delete the audit rows a suite's own fixtures produced.
+ *
+ * The Greenlight Audit Log is append-only by design and no other spec touches
+ * it, which was fine while the only rows a test run added were the two or three
+ * scoring events its leads triggered. The pipeline suite deliberately writes to
+ * it — a move is audited whether or not anything else succeeded — so a run adds
+ * about ten rows, and the log is what `05-calibration` reads its licence row out
+ * of by scrolling a list view that shows the newest few dozen. Left alone, a
+ * morning of pipeline runs pushes that row off the screen and fails a suite that
+ * has nothing to do with this one.
+ *
+ * Deleted in one bulk mutation rather than a row at a time: Twenty's REST/GraphQL
+ * limit is 100 requests a minute per workspace, and a teardown that could spend
+ * that on its own would be a teardown that intermittently fails the run it is
+ * cleaning up after.
+ */
+export const deleteAuditRowsForLeads = async (
+  leadDisplayNames: readonly string[],
+): Promise<number> => {
+  const names = leadDisplayNames.filter((name) => name !== '');
+
+  if (names.length === 0) {
+    return 0;
+  }
+
+  const found = await call<{
+    greenlightAuditLogs: { edges: { node: { id: string } }[] };
+  }>(
+    'graphql',
+    `query AuditRowsFor($names: [String!]) {
+       greenlightAuditLogs(
+         filter: { leadDisplayName: { in: $names } }
+         first: 200
+       ) {
+         edges { node { id } }
+       }
+     }`,
+    { names },
+  );
+
+  const ids = found.greenlightAuditLogs.edges.map((edge) => edge.node.id);
+
+  if (ids.length === 0) {
+    return 0;
+  }
+
+  const deleted = await call<{ deleteGreenlightAuditLogs: { id: string }[] }>(
+    'graphql',
+    `mutation DeleteAuditRows($ids: [UUID!]!) {
+       deleteGreenlightAuditLogs(filter: { id: { in: $ids } }) { id }
+     }`,
+    { ids },
+  );
+
+  return deleted.deleteGreenlightAuditLogs.length;
+};
+
 /** View ids are resolved by name so a re-apply that renumbers nothing still works. */
 export const viewIdByName = async (name: string): Promise<string> => {
   const result = await call<{
@@ -354,4 +422,396 @@ export const viewIdByName = async (name: string): Promise<string> => {
   }
 
   return match.node.id;
+};
+
+/* -------------------------------------------------------------------------- */
+/* Pipeline board                                                              */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The board's own lane order, restated here on purpose.
+ *
+ * `07-pipeline.spec.ts` asserts that the nine lanes appear in the order
+ * `PIPELINE_LANES` documents. Importing that constant out of `app/src` would
+ * make the test agree with the code by construction — the two would be the same
+ * array, and a reordering would move both at once and be asserted by nothing.
+ * The suite is a sibling of `app/` precisely so it cannot reach into it; this is
+ * the same argument applied to a constant instead of a module.
+ */
+export const PIPELINE_LANE_LABELS_IN_ORDER: readonly string[] = [
+  'Captured',
+  'Enriching',
+  'Held',
+  'Qualified',
+  'New',
+  'Screening',
+  'Meeting',
+  'Proposal',
+  'Customer',
+];
+
+export type OpportunityInput = {
+  name: string;
+  /** `NEW` | `SCREENING` | `MEETING` | `PROPOSAL` | `CUSTOMER`. */
+  stage: string;
+  companyId?: string;
+  /** The Person the board carries across the handoff line as point of contact. */
+  pointOfContactId?: string;
+};
+
+export const createOpportunity = async (
+  data: OpportunityInput,
+): Promise<string> => {
+  const result = await call<{ createOpportunity: { id: string } }>(
+    'graphql',
+    `mutation Create($data: OpportunityCreateInput!) {
+       createOpportunity(data: $data) { id }
+     }`,
+    { data },
+  );
+
+  return result.createOpportunity.id;
+};
+
+export const deleteOpportunity = async (id: string): Promise<void> => {
+  await call(
+    'graphql',
+    `mutation Del($id: UUID!) { deleteOpportunity(id: $id) { id } }`,
+    { id },
+  );
+};
+
+/** An Opportunity, with the five fields the board writes onto it. */
+export type AdvisedOpportunity = {
+  id: string;
+  name: string | null;
+  stage: string | null;
+  companyId: string | null;
+  pointOfContactId: string | null;
+  greenlightNextAction: string | null;
+  greenlightNextActionKind: string | null;
+  greenlightAdvisedAt: string | null;
+  greenlightReadiness: number | null;
+  /** RAW_JSON. `unknown` for the same reason `greenlightTrace` is. */
+  greenlightCriteria?: unknown;
+};
+
+const OPPORTUNITY_SELECTION = `
+  id
+  name
+  stage
+  companyId
+  pointOfContactId
+  greenlightNextAction
+  greenlightNextActionKind
+  greenlightAdvisedAt
+  greenlightReadiness
+  greenlightCriteria
+`;
+
+export const readOpportunity = async (
+  id: string,
+): Promise<AdvisedOpportunity | null> => {
+  const result = await call<{
+    opportunities: { edges: { node: AdvisedOpportunity }[] };
+  }>(
+    'graphql',
+    `query ReadOpportunity($id: UUID!) {
+       opportunities(filter: { id: { eq: $id } }, first: 1) {
+         edges { node { ${OPPORTUNITY_SELECTION} } }
+       }
+     }`,
+    { id },
+  );
+
+  return result.opportunities.edges[0]?.node ?? null;
+};
+
+/**
+ * Every deal whose point of contact is this lead.
+ *
+ * The handoff test's central claim is "exactly one Opportunity was created", so
+ * the helper returns the list rather than a boolean — two is a different and
+ * much worse failure than none, and a test that could only say "not one" would
+ * not tell them apart.
+ */
+export const opportunitiesForPerson = async (
+  personId: string,
+): Promise<AdvisedOpportunity[]> => {
+  const result = await call<{
+    opportunities: { edges: { node: AdvisedOpportunity }[] };
+  }>(
+    'graphql',
+    `query DealsFor($personId: UUID!) {
+       opportunities(
+         filter: { pointOfContactId: { eq: $personId } }
+         first: 20
+       ) {
+         edges { node { ${OPPORTUNITY_SELECTION} } }
+       }
+     }`,
+    { personId },
+  );
+
+  return result.opportunities.edges.map((edge) => edge.node);
+};
+
+/** A Person, with the three advice fields the board writes onto it. */
+export type AdvisedPerson = ScoredPerson & {
+  companyId: string | null;
+  greenlightNextAction: string | null;
+  greenlightNextActionKind: string | null;
+  greenlightAdvisedAt: string | null;
+  name?: { firstName: string; lastName: string };
+  emails?: { primaryEmail: string };
+};
+
+const PERSON_ADVICE_SELECTION = `
+  id
+  companyId
+  name { firstName lastName }
+  emails { primaryEmail }
+  greenlightScore
+  greenlightDecision
+  greenlightNextAction
+  greenlightNextActionKind
+  greenlightAdvisedAt
+`;
+
+export const readPersonAdvice = async (
+  id: string,
+): Promise<AdvisedPerson | null> => {
+  const result = await call<{ people: { edges: { node: AdvisedPerson }[] } }>(
+    'graphql',
+    `query ReadAdvice($id: UUID!) {
+       people(filter: { id: { eq: $id } }, first: 1) {
+         edges { node { ${PERSON_ADVICE_SELECTION} } }
+       }
+     }`,
+    { id },
+  );
+
+  return result.people.edges[0]?.node ?? null;
+};
+
+/** The capture drawer is given an email and nothing else to find the lead by. */
+export const findPersonByEmail = async (
+  email: string,
+): Promise<AdvisedPerson | null> => {
+  const result = await call<{ people: { edges: { node: AdvisedPerson }[] } }>(
+    'graphql',
+    `query ByEmail($email: String!) {
+       people(filter: { emails: { primaryEmail: { eq: $email } } }, first: 2) {
+         edges { node { ${PERSON_ADVICE_SELECTION} } }
+       }
+     }`,
+    { email },
+  );
+
+  return result.people.edges[0]?.node ?? null;
+};
+
+/**
+ * A Company read wide enough to prove one was *not* touched.
+ *
+ * Every scalar and composite the object carries, `updatedAt` included. The
+ * capture chain's contract is that matching an existing company links to it and
+ * changes nothing on it, and a comparison that only checked `name` would pass
+ * while the address, the domain or the revenue had been overwritten by whatever
+ * the person typed into the drawer.
+ */
+export type CompanyRecord = Record<string, unknown> & { id: string };
+
+export const readCompany = async (id: string): Promise<CompanyRecord | null> => {
+  const result = await call<{ companies: { edges: { node: CompanyRecord }[] } }>(
+    'graphql',
+    `query ReadCompany($id: UUID!) {
+       companies(filter: { id: { eq: $id } }, first: 1) {
+         edges {
+           node {
+             id
+             name
+             createdAt
+             updatedAt
+             position
+             accountOwnerId
+             domainName { primaryLinkUrl primaryLinkLabel secondaryLinks }
+             linkedinLink { primaryLinkUrl primaryLinkLabel secondaryLinks }
+             annualRevenue { amountMicros currencyCode }
+             address {
+               addressStreet1
+               addressStreet2
+               addressCity
+               addressState
+               addressCountry
+               addressPostcode
+             }
+           }
+         }
+       }
+     }`,
+    { id },
+  );
+
+  return result.companies.edges[0]?.node ?? null;
+};
+
+export const findCompaniesByName = async (
+  name: string,
+): Promise<{ id: string; name: string }[]> => {
+  const result = await call<{
+    companies: { edges: { node: { id: string; name: string } }[] };
+  }>(
+    'graphql',
+    `query ByName($name: String!) {
+       companies(filter: { name: { eq: $name } }, first: 10) {
+         edges { node { id name } }
+       }
+     }`,
+    { name },
+  );
+
+  return result.companies.edges.map((edge) => edge.node);
+};
+
+/**
+ * The workspace's own label for each `greenlightNextActionKind`.
+ *
+ * The card's chip and the record page's tag are both rendered from this SELECT's
+ * options, so reading them back out of metadata is how a test can say "the chip
+ * on screen is the label this workspace holds for the kind on the record"
+ * without restating fourteen strings that live in the app.
+ */
+export const nextActionKindLabels = async (): Promise<
+  Record<string, string>
+> => {
+  const result = await call<{
+    objects: {
+      edges: {
+        node: {
+          nameSingular: string;
+          fields: {
+            edges: {
+              node: {
+                name: string;
+                options: { value: string; label: string }[] | null;
+              };
+            }[];
+          };
+        };
+      }[];
+    };
+  }>(
+    'metadata',
+    `query {
+       objects(paging: { first: 300 }) {
+         edges {
+           node {
+             nameSingular
+             fields(paging: { first: 300 }) {
+               edges { node { name options } }
+             }
+           }
+         }
+       }
+     }`,
+  );
+
+  const opportunity = result.objects.edges.find(
+    (edge) => edge.node.nameSingular === 'opportunity',
+  );
+
+  const field = opportunity?.node.fields.edges.find(
+    (edge) => edge.node.name === 'greenlightNextActionKind',
+  );
+
+  const options = field?.node.options;
+
+  if (!options || options.length === 0) {
+    throw new Error(
+      'Opportunity.greenlightNextActionKind has no SELECT options in this ' +
+        'workspace, so the app is not applied or the field did not install.',
+    );
+  }
+
+  return Object.fromEntries(options.map((option) => [option.value, option.label]));
+};
+
+/**
+ * POST to the board's own logic-function route.
+ *
+ * Used for two things only, both of them *outside* the assertions:
+ *
+ *   - reading the lane totals the screen is claiming, so "the header count is
+ *     the true total" is checked against the server's arithmetic rather than
+ *     against a number typed into this file;
+ *   - deciding whether the AI rewrite has a model behind it at all, which is
+ *     `narrativeUnavailable` on a single-card `advise` and is the cheapest
+ *     honest way to derive that precondition from observed state rather than
+ *     from an environment variable. It costs at most one model call, on one
+ *     card, and only on a workspace that has a model to spend it on.
+ *
+ * Everything a test *claims* is still asserted in the browser. This is the same
+ * split the rest of this file lives on.
+ */
+export const postPipeline = async <T>(
+  request: Record<string, unknown>,
+): Promise<T> => {
+  const response = await fetch(`${API_URL}/s/greenlight/pipeline`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(request),
+  });
+
+  const body = (await response.json()) as T & { action?: string; message?: string };
+
+  if (body.action === 'error') {
+    throw new Error(
+      `The pipeline route refused ${JSON.stringify(request)}: ${body.message}`,
+    );
+  }
+
+  return body;
+};
+
+export type BoardLaneTotals = {
+  lanes: { lane: string; label: string; total: number; cardCount: number }[];
+};
+
+export const readBoardTotals = async (): Promise<BoardLaneTotals> => {
+  const board = await postPipeline<{
+    lanes: { lane: string; label: string; total: number; cards: unknown[] }[];
+  }>({ action: 'board' });
+
+  return {
+    lanes: board.lanes.map((lane) => ({
+      lane: lane.lane,
+      label: lane.label,
+      total: lane.total,
+      cardCount: lane.cards.length,
+    })),
+  };
+};
+
+/**
+ * Does this workspace have a model behind the AI rewrite?
+ *
+ * Derived from a real `advise` on one card rather than from a key being set,
+ * for the reason `05-calibration.spec.ts` sets out at length: "a key is present"
+ * can be true while delivery is broken, and a suite that skipped on the env var
+ * would report a broken integration as an absent one.
+ */
+export const narrativeLayerAvailable = async (
+  leadId: string,
+): Promise<boolean> => {
+  const reply = await postPipeline<{ narrativeUnavailable: boolean }>({
+    action: 'advise',
+    leadId,
+    withNarrative: true,
+  });
+
+  return reply.narrativeUnavailable === false;
 };

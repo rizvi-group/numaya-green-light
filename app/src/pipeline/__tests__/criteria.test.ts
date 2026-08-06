@@ -356,15 +356,67 @@ describe('meeting.discovery-call-logged', () => {
     expect(result.evidence).toContain('has not happened yet');
   });
 
-  it('should be unmet when no call is logged at all', () => {
+  /*
+   * The half this criterion was missing. PIPELINE_SPEC.md has always said "a
+   * Twenty Task **or** Note attached to the deal", and `src/default-role.ts`
+   * refuses to read the workspace calendar specifically on the grounds that
+   * those two answer the question between them. Reading tasks alone took the
+   * privacy win and gave up a third of the coverage it was traded for.
+   */
+  it('should be met by a write-up when no task was ever ticked', () => {
     const result = resultOf(
       'screening_to_meeting',
-      snapshotOf({}, { lastDiscoveryCallAt: null }),
+      snapshotOf(
+        {},
+        { lastDiscoveryCallAt: null, lastNoteAt: '2026-07-14T10:00:00.000Z' },
+      ),
+      id,
+    );
+
+    expect(result.status).toBe('met');
+    // Named by kind rather than as "activity": an admin auditing why a deal
+    // advanced needs to know whether somebody logged a call or left a note.
+    expect(result.evidence).toContain('note was written up');
+  });
+
+  it('should not let a note promote a call that has not happened yet', () => {
+    // The reason the two dates are not folded into one "latest activity". A
+    // call in the diary for next Tuesday is not a call that happened, and a
+    // note written today must not make it look like one.
+    const result = resultOf(
+      'screening_to_meeting',
+      snapshotOf(
+        {},
+        {
+          lastDiscoveryCallAt: '2099-01-01T10:00:00.000Z',
+          lastNoteAt: '2099-01-02T10:00:00.000Z',
+        },
+      ),
       id,
     );
 
     expect(result.status).toBe('unmet');
-    expect(result.evidence).toBe('no discovery call is logged against this deal');
+    expect(result.evidence).toContain('has not happened yet');
+  });
+
+  it('should decline to check when neither tasks nor notes were loaded', () => {
+    const result = resultOf('screening_to_meeting', snapshotOf({}, {}), id);
+
+    expect(result.status).toBe('indeterminate');
+    expect(result.evidence).toBe('no tasks or notes were loaded for this deal');
+  });
+
+  it('should be unmet when no call is logged at all', () => {
+    const result = resultOf(
+      'screening_to_meeting',
+      snapshotOf({}, { lastDiscoveryCallAt: null, lastNoteAt: null }),
+      id,
+    );
+
+    expect(result.status).toBe('unmet');
+    expect(result.evidence).toBe(
+      'no discovery call or write-up is logged against this deal',
+    );
   });
 
   it('should be indeterminate when activity was not loaded', () => {

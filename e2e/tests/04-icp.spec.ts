@@ -62,22 +62,49 @@ test.describe('the ICP page', () => {
       timeout: 90_000,
     });
     await expect(
-      page.getByText(/Industry read from Company\.industry/),
-    ).toBeVisible();
-    await expect(
       page.getByText(/Based on the \d+ most recently added of your [\d,]+ companies/),
     ).toBeVisible();
 
-    // The admission itself, for all three dimensions.
-    // The article is asserted exactly, not with `an?`. "has a industry
-    // recorded" was on this screen, next to the numbers an admin is being asked
-    // to trust, and a loose regex is what let it sit there.
-    await expect(
-      page.getByText(
-        /None of the \d+ companies examined has an industry recorded, so there is nothing to derive a profile from/,
-      ),
-      'the page must say outright that there is no industry data to work from',
-    ).toBeVisible();
+    /*
+     * Two mutually exclusive admissions, and which one is correct depends on the
+     * workspace rather than on the app.
+     *
+     * This used to assert "Industry read from Company.industry" unconditionally,
+     * and it passed for months against a workspace that has no industry field at
+     * all. The page was wrong, not the test: `probeField` decided a candidate
+     * existed by *selecting* it, and Twenty does not validate selection sets — an
+     * unknown column is accepted and returns `null`. So every candidate reported
+     * present, the panel named five Company fields the workspace does not have,
+     * and the one note an admin could have acted on was unreachable by
+     * construction. Fixed in the app; this assertion had been encoding the bug.
+     *
+     * Branching on the observed state rather than pinning either sentence,
+     * because both are correct answers to different workspaces and a test that
+     * demands one would fail the moment somebody adds a custom industry field —
+     * which is precisely the thing the page is telling them to do.
+     */
+    const hasIndustryField = await page
+      .getByText(/Industry read from Company\./)
+      .isVisible();
+
+    if (hasIndustryField) {
+      // The article is asserted exactly, not with `an?`. "has a industry
+      // recorded" was on this screen, next to the numbers an admin is being
+      // asked to trust, and a loose regex is what let it sit there.
+      await expect(
+        page.getByText(
+          /None of the \d+ companies examined has an industry recorded, so there is nothing to derive a profile from/,
+        ),
+        'the page must say outright that there is no industry data to work from',
+      ).toBeVisible();
+    } else {
+      await expect(
+        page.getByText(
+          /This workspace has no industry field on Company .* Nothing can be proposed for industry until one exists and is filled in/,
+        ),
+        'a workspace with no industry column must be told that, not told which of five imaginary columns was read',
+      ).toBeVisible();
+    }
     await expect(
       page.getByText(/None of the \d+ companies examined has a region recorded/),
     ).toBeVisible();

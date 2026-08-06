@@ -144,10 +144,10 @@ Score, decision, trace, enrichment and suppression fields already exist and are 
 | `src/pipeline/next-action.ts` | pure | the ranking |
 | `src/pipeline/types.ts` | pure | `PipelineCard`, `RankedAction`, `Criterion` |
 | `src/agents/greenlight-next-action.agent.ts` | agent | phrasing + research proposal |
-| `src/logic-functions/pipeline-board.logic-function.ts` | I/O | one call returns the whole board |
-| `src/logic-functions/pipeline-capture.logic-function.ts` | I/O | the three-field chain |
-| `src/logic-functions/pipeline-advance.logic-function.ts` | I/O | move a card, create the Opportunity on handoff, audit |
-| `src/logic-functions/pipeline-advise.logic-function.ts` | I/O | recompute advice for a card or the board |
+| `src/pipeline/wire.ts` | pure | the request/response contract both halves import |
+| `src/logic-functions/pipeline-control.logic-function.ts` | I/O | the one route; `action` discriminates board / capture / advance / advise |
+| `src/logic-functions/pipeline-run.ts` | I/O | orchestration for all four |
+| `src/logic-functions/pipeline-store.ts` | I/O | every read and write against Twenty |
 | `src/front-components/greenlight-pipeline.tsx` | UI | the board, the capture drawer, the card detail |
 | `src/page-layouts/greenlight-pipeline.page-layout.ts` | metadata | standalone page |
 | `src/navigation-menu-items/…` | metadata | **first** sidebar entry, above the gate queue |
@@ -184,6 +184,32 @@ is making the wrong trade on their behalf.
 Write on `task` and `note` stays off for a second reason: an app that could create
 the activity could satisfy its own exit criterion, and a readiness number the app can
 manufacture is worth nothing.
+
+## Two things the CRM does that this spec does not control
+
+**Twenty relinks the Company from the email domain.** Measured, not inferred: about
+two seconds after capture creates a Person, Twenty creates a Company from the
+person's email domain and repoints the Person at it, discarding the `companyId`
+capture set. So a rep who types "Acme" for a lead at `elsewhere.example` gets
+Greenlight's dedupe answer — *linked to a company you already had* — and then,
+silently, a brand-new company named `elsewhere.example` and exactly the duplicate
+the dedupe step exists to prevent.
+
+Greenlight's own guarantee survives intact: it created nothing and modified
+nothing. The spec's capture step 2 does not survive contact with the CRM unless
+the email domain agrees with the company name. This is Twenty's behaviour and
+overriding it is not obviously ours to do, but the drawer should not imply an
+outcome the platform is about to undo — that is unresolved and recorded here
+rather than left to be rediscovered.
+
+**The discovery-call criterion reads Tasks and Notes, and nothing else.** That is
+deliberate and is the whole basis of the `calendarEvent` refusal above. It shipped
+reading Tasks only, which quietly gave up a third of the coverage the privacy
+trade was made for; a rep who writes a call up as a note rather than ticking a
+task was told nobody had spoken to the account. Fixed, and the two are kept
+separate rather than folded into "latest activity" because a task carries `dueAt`
+and can therefore be in the future — a call in the diary for next Tuesday is not a
+call that happened, and that distinction is the criterion's reason for existing.
 
 ## What this does not do
 
