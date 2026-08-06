@@ -880,7 +880,7 @@ test('moving with a criterion outstanding names it first, then records the overr
       'counted and not summarised',
   ).toBeVisible();
   await expect(
-    card.getByText('discovery call — no discovery call is logged against this deal'),
+    card.getByText('discovery call — no discovery call or write-up is logged against this deal'),
     'the criterion must carry the evidence the server wrote for it',
   ).toBeVisible();
 
@@ -1054,17 +1054,21 @@ test('a Screening deal with no logged activity reports its discovery call as unm
    * the only thing that distinguishes the two branches without restating the
    * component's tone words:
    *
-   *   unmet          "no discovery call is logged against this deal"
-   *   indeterminate  "no calls or meetings were loaded for this deal"
+   *   unmet          "no discovery call or write-up is logged against this deal"
+   *   indeterminate  "no tasks or notes were loaded for this deal"
+   *
+   * The wording carries "or write-up" because the criterion reads Tasks **and**
+   * Notes. It shipped reading tasks alone, which gave up a third of the coverage
+   * that `default-role.ts` refused `calendarEvent` in order to get.
    * ------------------------------------------------------------------------ */
   await expect(
-    card.getByText('discovery call — no discovery call is logged against this deal'),
+    card.getByText('discovery call — no discovery call or write-up is logged against this deal'),
     'a Screening deal with nothing logged against it has an unmet discovery ' +
       'call, and the card has to say so',
   ).toBeVisible();
 
   await expect(
-    card.getByText(/no calls or meetings were loaded for this deal/),
+    card.getByText(/no tasks or notes were loaded for this deal/),
     'reporting the discovery call as unreadable is the defect: the deal was ' +
       'read, the activity was read, and the answer is that there is none',
   ).toHaveCount(0);
