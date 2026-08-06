@@ -16,6 +16,23 @@
  * paths are driven: every one of them has to produce a notice rather than an
  * exception, and there is no way to assert that without a workspace that breaks
  * in a specific place.
+ *
+ * ## What this fake is strict about, and why it matters
+ *
+ * Twice now this file has been faithful to the code and wrong about the server,
+ * and both times the unit suite stayed green while the feature answered nothing.
+ * The rule it now models, proved against a live instance and held standing by
+ * `src/__live__/api-contract.live-test.ts`:
+ *
+ *   - **Arguments are validated.** A `filter` or an `orderBy` naming a field the
+ *     object does not have is rejected: `Object opportunity doesn't have any
+ *     "ownerId" field.` So is a mutation's `data`.
+ *   - **Selection sets are not.** A column the object does not have is selected
+ *     without complaint and comes back `null`.
+ *
+ * A fake may only reject what the real server rejects. Rejecting a selection is
+ * how the owner probe came to look answerable; answering a filter Twenty refuses
+ * is how the activity criteria came to look checked.
  */
 
 import {
@@ -212,17 +229,31 @@ export const createFakeWorkspace = (
 
       if ('opportunities' in request) {
         const asked = Object.keys(selection(request, 'opportunities'));
+        const filter = args(request, 'opportunities')['filter'];
 
-        if (asked.includes('ownerId') && options.ownerField !== true) {
-          throw new Error('Cannot query field "ownerId" on type "Opportunity"');
+        // The owner probe, and the second thing this file got wrong.
+        //
+        // It used to throw `Cannot query field "ownerId"` whenever `ownerId`
+        // appeared in the *selection*, which is a server that does not exist:
+        // Twenty validates arguments and not selection sets, so a column the
+        // object does not have is selected happily and comes back `null`. The
+        // fake was strict where the real API is lax, so `probeOpportunityOwner`
+        // looked like it was answering a question it could not answer — see the
+        // long note on that function in `pipeline-store.ts`.
+        //
+        // What the real API rejects is the *filter*, so that is what this
+        // rejects, with the message it actually sends. A workspace whose
+        // Opportunity has no owner column therefore fails the probe here for the
+        // same reason it fails it live.
+        if (path(filter, 'ownerId') !== undefined && options.ownerField !== true) {
+          throw new Error('Object opportunity doesn\'t have any "ownerId" field.');
         }
 
-        // The owner probe: `first: 1`, id and ownerId only.
-        if (asked.length === 2 && asked.includes('ownerId')) {
+        // The owner probe proper: `first: 1`, filtered on `ownerId`, id only.
+        if (path(filter, 'ownerId') !== undefined) {
           return connection('opportunities', []);
         }
 
-        const filter = args(request, 'opportunities')['filter'];
         const id = path(filter, 'id', 'eq');
 
         if (typeof id === 'string') {

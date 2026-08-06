@@ -33,7 +33,17 @@ interface WorkspaceOptions {
   readonly companies?: readonly Record<string, unknown>[];
   readonly people?: readonly Record<string, unknown>[];
   readonly configRecords?: readonly Record<string, unknown>[] | null;
-  /** Make the config read including the two review columns fail. */
+  /**
+   * A server **stricter than Twenty 2.26**: one that rejects a selection naming
+   * a column it does not have.
+   *
+   * Labelled rather than deleted. Twenty does not behave this way — see the
+   * `companies` branch below — so `loadIcpConfigRecord`'s fall-back cannot fire
+   * against the instance this app ships against, and the test that drives this
+   * switch says so in its name. It is kept because the rung is kept: selection
+   * validation is a property of this release rather than of GraphQL, and if
+   * Twenty ever tightened it, this is the behaviour the fall-back exists for.
+   */
   readonly reviewColumnsMissing?: boolean;
   /** Make every `updateGreenlightConfig` fail. */
   readonly configWriteFails?: boolean;
@@ -45,6 +55,25 @@ const nodeFields = (request: Record<string, unknown>, key: string): string[] => 
   const node = (edges?.['node'] ?? {}) as Record<string, unknown>;
 
   return Object.keys(node);
+};
+
+/**
+ * The columns a `filter` argument names.
+ *
+ * Only the top level, which is where Twenty's *"Object company doesn't have any
+ * `X` field"* is decided. Below that a composite's sub-path is checked against
+ * the composite's own shape and produces a different complaint (*"Sub field
+ * `is` not found for composite type: ADDRESS"*), which nothing here exercises —
+ * so this fake stops at the depth it can honestly model.
+ */
+const filterFields = (request: Record<string, unknown>, key: string): string[] => {
+  const connection = request[key] as Record<string, unknown> | undefined;
+  const args = connection?.['__args'] as Record<string, unknown> | undefined;
+  const filter = args?.['filter'];
+
+  return typeof filter === 'object' && filter !== null
+    ? Object.keys(filter as Record<string, unknown>)
+    : [];
 };
 
 const connection = (
@@ -81,13 +110,36 @@ const makeWorkspace = (options: WorkspaceOptions = {}): FakeClient => {
           return { companies: { totalCount: (options.companies ?? []).length } };
         }
 
-        for (const field of nodeFields(request, 'companies')) {
+        // Only the filter is checked, and this is the whole point of the fake.
+        //
+        // It used to reject unknown names in the *selection* — which is a server
+        // Twenty is not. Twenty validates arguments and leaves selection sets
+        // alone: a column Company does not have is selected without complaint
+        // and comes back `null`. Modelling the reverse made `probeCompanyFields`
+        // look like it could tell a missing industry column from a present one,
+        // when live it reported every candidate as present on every workspace.
+        // See `probeField` in `icp-run.ts` for what that cost.
+        for (const field of filterFields(request, 'companies')) {
           if (!companyFields.has(field)) {
-            throw new Error(`Cannot query field "${field}" on type "Company"`);
+            throw new Error(`Object company doesn't have any "${field}" field.`);
           }
         }
 
-        return connection('companies', options.companies ?? []);
+        // Selected-but-absent columns come back `null`, exactly as Twenty
+        // returns them, rather than being quietly dropped — which is what makes
+        // "the sample has the column and it is empty" and "the workspace has no
+        // such column" look identical to a caller, as they do live.
+        const absent = nodeFields(request, 'companies').filter(
+          (field) => !companyFields.has(field),
+        );
+
+        return connection(
+          'companies',
+          (options.companies ?? []).map((company) => ({
+            ...Object.fromEntries(absent.map((field) => [field, null])),
+            ...company,
+          })),
+        );
       }
 
       if ('people' in request) {
@@ -154,13 +206,37 @@ describe('readIcpReviewStatus', () => {
     expect(outcome.body.status).toBeNull();
   });
 
-  it('falls back to the shipped selection when the review columns are not there', async () => {
+  /**
+   * Against Twenty this cannot happen, and the name says so.
+   *
+   * Selection sets are not validated, so the extended read succeeds on every
+   * workspace and the fall-back rung is unreachable. The rung and this test are
+   * both kept for the server that tightened, not for the one we ship against —
+   * see `loadIcpConfigRecord` and `WorkspaceOptions.reviewColumnsMissing`.
+   */
+  it('falls back to the shipped selection on a server stricter than Twenty', async () => {
     const outcome = await readIcpReviewStatus({
       client: makeWorkspace({ reviewColumnsMissing: true }),
     });
 
     expect(outcome.body.outcome).toBe('ok');
     expect(outcome.body.status?.idlePoints).toBe(40);
+  });
+
+  /**
+   * And this is what actually happens on Twenty: one read, no fall-back, and a
+   * review column the workspace does not have arrives as `null` rather than as
+   * an error. The panel is still correct — `NOT_REVIEWED` is the right answer
+   * for a record with no decision on it — which is why the unreachable rung was
+   * never noticed and why nothing depends on it.
+   */
+  it('reads the review columns in a single request on a real Twenty', async () => {
+    const client = makeWorkspace();
+    const outcome = await readIcpReviewStatus({ client });
+
+    expect(outcome.body.outcome).toBe('ok');
+    expect(outcome.body.status?.review.decision).toBe('NOT_REVIEWED');
+    expect(client.callsTo('greenlightConfigs')).toHaveLength(1);
   });
 });
 

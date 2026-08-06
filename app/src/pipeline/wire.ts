@@ -68,6 +68,35 @@ export interface CaptureRequest {
  * `toLane` rather than a delta, so a double-submitted drag lands the card where
  * the user dropped it instead of two lanes further on.
  *
+ * ## Why `toLane` still admits all nine lanes
+ *
+ * Raised by the component author, and worth writing down rather than fixing:
+ * the board only ever *offers* the Qualified handoff and moves between the five
+ * Opportunity lanes (`moveTargets` in the front component), so a request naming
+ * Captured, Enriching, Held or Qualified as a target can only come from a
+ * hand-written caller. The obvious tightening is to narrow this type, or to
+ * refuse those targets on the server.
+ *
+ * Both were declined, for two different reasons.
+ *
+ * Narrowing the type would be a lie about what the route accepts: the body is
+ * JSON off the wire and `parsePipelineRequest` has to decide what to do with
+ * `toLane: 'enriching'` whatever this type says, so the narrowing would move the
+ * decision somewhere it is invisible rather than remove it.
+ *
+ * Refusing would break the one promise `runAdvance` is built on — PIPELINE_SPEC
+ * § "Advancing is never blocked" — and would refuse moves that are perfectly
+ * expressible. Three of the four derived lanes *are* a single write: Captured,
+ * Held and Qualified are read back off `greenlightDecision`, and moving into
+ * them writes the same field `release-lead.logic-function.ts` writes. Only
+ * `enriching` has no write behind it, because it is derived from an in-flight
+ * provider run and from gaps a provider might fill, neither of which a drag can
+ * assert. That one case is already answered the way the rest of this file
+ * answers a thing it cannot do: the move is audited, nothing is written, the
+ * card comes back in the lane the record actually puts it in, and a notice says
+ * so in the customer's words. See `runAdvance`, and the test named "should
+ * record the move but write nothing when a card is dropped into Enriching".
+ *
  * `acknowledgedUnmet` is the override receipt. The board never refuses a move —
  * a rep who knows something the CRM does not is usually right — but a move made
  * with criteria outstanding is recorded as one, and the flag is how the server
@@ -96,6 +125,36 @@ export interface AdviseRequest {
    * a defect regardless of how good the copy was.
    */
   readonly withNarrative?: boolean;
+  /**
+   * Return the lanes as well as the cards, so one response repaints the screen.
+   *
+   * ## The defect this closes
+   *
+   * `AdviseResponse` used to return `cards` and nothing else, and recomputing
+   * advice can move a card between lanes — a deal whose close date was filled in
+   * since the last read leaves Meeting. Merging the returned cards into a board
+   * painted from an earlier `board` call therefore left the lane headers
+   * claiming counts that no longer matched the cards under them, and the header
+   * count is the one number a rep uses to decide which lane to work. The front
+   * component did the only safe thing available to it and re-read the whole
+   * board afterwards: two round trips for a caller that wanted one, both of
+   * which page every Person and every Opportunity in the workspace.
+   *
+   * ## Why a flag rather than always
+   *
+   * Because a single-card advise should not pay for a whole board's arithmetic.
+   * Board-wide advice already has every card in hand — the lanes are a group, a
+   * sort and a slice over data that was read anyway, and cost nothing worth
+   * naming. Advising *one* card has read one Person and its deals, so answering
+   * with lanes means going back for all of them: the same work the second round
+   * trip would have done. That is still a saving of one request and one shared
+   * preamble for a caller that wants to repaint, and pure waste for the record
+   * page recomputing one card. Neither caller can be guessed at from the shape
+   * of the request, so it is asked for.
+   *
+   * Off by default, so the callers that existed before this flag are unchanged.
+   */
+  readonly withLanes?: boolean;
 }
 
 export type PipelineRequest =
@@ -133,9 +192,33 @@ export interface BoardResponse {
   readonly generatedAt: string;
 }
 
+/**
+ * `message` on a success, and why the two writing operations grew one.
+ *
+ * `PipelineErrorResponse` below argues that a component inventing its own copy
+ * for a condition the server understood better is how "something went wrong"
+ * ends up on a screen where the server knew exactly what went wrong. That
+ * argument does not stop being true when the operation succeeds, and for a
+ * while these two shapes were the exception: the front component wrote
+ * "Handed off to New…" itself, from `createdOpportunityId` and a lane label,
+ * because there was nothing on the response to render.
+ *
+ * It was wrong in the same way and for the same reason. The server is the half
+ * that knows a deal already existed and was moved rather than opened, that a
+ * write was rejected and the card is still where it was, or that the address
+ * matched somebody already in the workspace. A client reconstructing any of
+ * that from two booleans is guessing at an outcome it was not present for.
+ *
+ * So both carry one sentence saying what actually happened, written for the
+ * person on the screen and rendered verbatim, exactly as `message` on the
+ * failure shape is. `notices` keeps its own job — everything the operation
+ * could not do — and does not repeat what `message` has already said.
+ */
 export interface CaptureResponse {
   readonly action: 'capture';
   readonly card: PipelineCard;
+  /** What the chain did with the records. Rendered verbatim. */
+  readonly message: string;
   /** True when an existing Company or Person was reused rather than created. */
   readonly matchedExistingCompany: boolean;
   readonly matchedExistingPerson: boolean;
@@ -145,6 +228,8 @@ export interface CaptureResponse {
 export interface AdvanceResponse {
   readonly action: 'advance';
   readonly card: PipelineCard;
+  /** Where the card actually landed and what the move did. Rendered verbatim. */
+  readonly message: string;
   /** Set when crossing the handoff line created one. */
   readonly createdOpportunityId: string | null;
   readonly notices: readonly string[];
@@ -153,9 +238,22 @@ export interface AdvanceResponse {
 export interface AdviseResponse {
   readonly action: 'advise';
   readonly cards: readonly PipelineCard[];
+  /**
+   * The same lane shape `board` returns, or null when `withLanes` was not asked
+   * for. See `AdviseRequest.withLanes`.
+   *
+   * Null rather than absent, so "the caller did not ask" and "the server does
+   * not know how" are the same visible answer to a component deciding whether it
+   * can repaint from this response or must go back for the board. A caller must
+   * treat null as "read the board yourself": that is the fail-open path, and it
+   * is what every caller did before this field existed.
+   */
+  readonly lanes: readonly LaneSummary[] | null;
   /** True when `withNarrative` was asked for and the AI layer was unavailable. */
   readonly narrativeUnavailable: boolean;
   readonly notices: readonly string[];
+  /** When this advice was computed, so a repaint can date itself honestly. */
+  readonly generatedAt: string;
 }
 
 /**

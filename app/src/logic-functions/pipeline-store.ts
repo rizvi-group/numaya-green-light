@@ -99,6 +99,19 @@ export const PIPELINE_PAGE_SIZE = 60;
  *     is now worth proving against a live instance rather than reading off a
  *     response body.
  *
+ * Sweeping the rest of the app against a live instance afterwards turned the
+ * second point into a rule with two edges, and the *other* edge had bitten too —
+ * see `probeOpportunityOwner` below:
+ *
+ *     Twenty validates arguments (`filter`, `orderBy`, mutation `data`) against
+ *     the object's schema. It does not validate selection sets.
+ *
+ * So `selectable` implies nothing about `filterable`, and — the direction that
+ * is much easier to miss — a selection coming back without an error implies
+ * nothing about the field existing. `src/__live__/api-contract.live-test.ts`
+ * is the standing proof of both, and is the thing to run before believing any
+ * new query in this app.
+ *
  * The nested form is what Twenty actually supports, and it is strictly better
  * anyway: the activities arrive inside the opportunity read instead of costing a
  * second and third round trip per batch of sixty.
@@ -423,12 +436,17 @@ export const pipelinePersonSelection = (): Record<string, unknown> => ({
  * The Opportunity columns, with `ownerId` behind a probe.
  *
  * Stock Twenty's Opportunity has no owner column; plenty of workspaces add one,
- * and the `owner assigned` exit criterion asks for it by that name. Selecting a
- * field that does not exist fails the entire request, so the extended selection
- * is tried once and the base one is the fall-back — the same ladder
- * `loadIcpConfigRecord` walks, for the same reason, and with the same outcome
- * when it fails: the criterion reports `indeterminate` rather than asserting
- * that nobody owns a deal we never looked at.
+ * and the `owner assigned` exit criterion asks for it by that name.
+ *
+ * `withOwner` is not an optimisation and it is not defensive: selecting a column
+ * Twenty does not have is *accepted* and comes back `null` (see
+ * `probeOpportunityOwner`), so leaving `ownerId` in unconditionally would not
+ * fail — it would quietly produce a `null` that reads as "this deal has no
+ * owner". Omitting the column is the only way to leave `LeadSnapshot.ownerId`
+ * `undefined`, and `undefined` is what makes the criterion report
+ * `indeterminate` rather than asserting that nobody owns a deal we never looked
+ * at. The `undefined` / `null` distinction in `src/pipeline/types.ts` is load
+ * bearing here, exactly as it is for the activity reads above.
  */
 export const pipelineOpportunitySelection = (
   withOwner: boolean,
@@ -453,6 +471,47 @@ export const pipelineOpportunitySelection = (
  * answer by having the first full page rejected, and the answer is reported to
  * the caller so the board can say why an owner criterion is unanswerable rather
  * than leaving a rep to wonder.
+ *
+ * ## Why the probe is a filter and not a selection
+ *
+ * This asked for `ownerId` in the **selection set** and read "no error" as "the
+ * field is there". It is the `taskTargets` mistake at the top of this file run
+ * backwards, and it is worth stating as one rule, because the two corollaries
+ * point in opposite directions and both have now bitten:
+ *
+ *     Twenty validates ARGUMENTS against the object's schema.
+ *     Twenty does not validate SELECTION SETS.
+ *
+ * A `filter`, an `orderBy` or a mutation `data` naming a field the object does
+ * not have is rejected — `Object opportunity doesn't have any "ownerId" field.`
+ * A *selection* naming a field the object does not have is **accepted**, and the
+ * column comes back `null`:
+ *
+ *     { opportunities(first: 1) { edges { node { id nonesuchField } } } }
+ *     → { "node": { "id": "…", "nonesuchField": null } }
+ *
+ * So the old probe returned `true` on every workspace in existence, including
+ * every workspace with no owner column at all. `pipelineOpportunitySelection`
+ * then selected `ownerId`, the server returned `null` for it, and
+ * `toOpportunitySnapshot` recorded that `null` as a value that *was read*. The
+ * `screening.owner-assigned` criterion in `src/pipeline/criteria.ts` reads a
+ * read-but-empty owner as `unmet` — so a workspace that has no owner field was
+ * told **"nobody owns this deal"** on every card in Screening, and sent its reps
+ * to assign an owner using a field the CRM does not have. The `indeterminate`
+ * branch that criterion carries for exactly this case — "no owner field was
+ * loaded for this card" — could never be reached.
+ *
+ * Filtering on the column is the honest question, because the filter argument is
+ * the half Twenty checks. Nothing is read from the result: the rows that come
+ * back are irrelevant and an empty workspace answers `true` just as a full one
+ * does, which is the point — this asks about the *schema*, not the data.
+ *
+ * The residual risk is the `taskTargets` failure mode in reverse: a column that
+ * is selectable but not filterable would be reported absent, `withOwner` would
+ * be `false`, and the criterion would report `indeterminate`. That is "Greenlight
+ * could not check", which is a true statement and a safe one. The failure
+ * direction of the old probe was an assertion about a rep's pipeline that was
+ * simply false, and those two are not comparable.
  */
 export const probeOpportunityOwner = async (
   client: GreenlightApiClient,
@@ -460,11 +519,14 @@ export const probeOpportunityOwner = async (
   try {
     const response = await client.query({
       opportunities: {
-        __args: { first: 1 },
-        edges: { node: { id: true, ownerId: true } },
+        __args: { first: 1, filter: { ownerId: { is: 'NOT_NULL' } } },
+        edges: { node: { id: true } },
       },
     });
 
+    // Still checked, for the same reason `icp-run.ts` checks it: a transport
+    // that returned `{ errors, data: null }` instead of throwing would make a
+    // rejected filter look like a schema that has the column.
     return isPlainRecord(response) && isPlainRecord(response['opportunities']);
   } catch {
     return false;

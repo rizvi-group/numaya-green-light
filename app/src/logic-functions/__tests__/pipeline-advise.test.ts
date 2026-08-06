@@ -4,11 +4,16 @@ import {
   ADVISE_WRITE_LIMIT,
   buildNarrativePrompt,
   parseNarrativeReply,
+  parsePipelineRequest,
   runPipelineCommand,
   type NarrativePort,
 } from 'src/logic-functions/pipeline-run';
-import { ACTION_KINDS } from 'src/pipeline/types';
-import type { AdviseResponse, PipelineErrorResponse } from 'src/pipeline/wire';
+import { ACTION_KINDS, PIPELINE_LANES } from 'src/pipeline/types';
+import type {
+  AdviseResponse,
+  BoardResponse,
+  PipelineErrorResponse,
+} from 'src/pipeline/wire';
 
 import { mutationData } from 'src/logic-functions/__tests__/fake-client';
 import {
@@ -161,6 +166,118 @@ describe('advise', () => {
 
       expect(status).toBe(404);
       expect((body as PipelineErrorResponse).code).toBe('not_found');
+    });
+  });
+
+  /**
+   * The lanes, and the round trip they exist to remove.
+   *
+   * Recomputing can move a card between lanes, so a caller merging the returned
+   * cards into a board painted earlier would be left with headers claiming
+   * counts that no longer match the cards under them. Before `withLanes` the
+   * front component answered that by re-reading the whole board afterwards —
+   * correct, and two full workspace reads for one click.
+   */
+  describe('the lanes', () => {
+    const twoLeads = (): FakeWorkspaceOptions => ({
+      people: [
+        aPerson({ id: 'person-a' }),
+        aPerson({
+          id: 'person-b',
+          emails: { primaryEmail: 'b@northwind.example' },
+          greenlightDecision: 'GATE',
+        }),
+      ],
+    });
+
+    it('should say nothing about lanes unless it was asked to', async () => {
+      const { body } = await advise(twoLeads());
+
+      expect((body as AdviseResponse).lanes).toBeNull();
+    });
+
+    it('should return exactly the lane shape the board returns', async () => {
+      const { body } = await advise(twoLeads(), { withLanes: true });
+
+      const board = await runPipelineCommand(
+        { action: 'board' },
+        {
+          client: createFakeWorkspace(twoLeads()),
+          now: NOW,
+          actor: 'Workspace member wm-1',
+        },
+      );
+
+      // Deep equality, not a spot check on the totals: the point of the flag is
+      // that a caller can repaint from this response, and a repaint whose lanes
+      // were computed differently from the board's would be the defect it was
+      // added to fix, one layer further down.
+      expect((body as AdviseResponse).lanes).toEqual(
+        (board.body as BoardResponse).lanes,
+      );
+      expect((body as AdviseResponse).lanes?.map((lane) => lane.lane)).toEqual([
+        ...PIPELINE_LANES,
+      ]);
+    });
+
+    it('should date the answer so a repaint can say when it was read', async () => {
+      const { body } = await advise(twoLeads(), { withLanes: true });
+
+      expect((body as AdviseResponse).generatedAt).toBe(NOW.toISOString());
+    });
+
+    it('should put the whole board in the lanes even when one card was advised', async () => {
+      const { body } = await advise(twoLeads(), {
+        leadId: 'person-a',
+        withLanes: true,
+      });
+
+      const response = body as AdviseResponse;
+
+      // One card asked about, both cards in the lanes. A caller repainting from
+      // this must not be handed a board with the other lead missing from it.
+      expect(response.cards).toHaveLength(1);
+      expect(
+        response.lanes?.reduce((sum, lane) => sum + lane.total, 0),
+      ).toBe(2);
+    });
+
+    it('should carry the rewritten sentence into the lanes, not the board’s own copy', async () => {
+      const { body } = await advise(
+        { people: [aPerson()] },
+        { leadId: 'person-a', withNarrative: true, withLanes: true },
+        async () =>
+          '{"sentences":[{"id":"a1","sentence":"Ring Priya and get a date in the diary."}]}',
+      );
+
+      const response = body as AdviseResponse;
+      const inLane = response.lanes
+        ?.flatMap((lane) => lane.cards)
+        .find((card) => card.leadId === 'person-a');
+
+      expect(inLane?.actions[0]?.sentence).toBe(
+        'Ring Priya and get a date in the diary.',
+      );
+      expect(
+        response.lanes?.reduce((sum, lane) => sum + lane.total, 0),
+      ).toBe(1);
+    });
+
+    it('should read the flag off the body, and only when it is true', () => {
+      const asked = parsePipelineRequest({ action: 'advise', withLanes: true });
+      const notAsked = parsePipelineRequest({
+        action: 'advise',
+        withLanes: 'true',
+      });
+
+      expect(asked.ok && asked.request.action === 'advise' && asked.request.withLanes).toBe(
+        true,
+      );
+      expect(
+        notAsked.ok &&
+          notAsked.request.action === 'advise' &&
+          notAsked.request.withLanes,
+      ).toBe(false);
     });
   });
 

@@ -66,9 +66,30 @@ import {
  * record at a time would rate-limit itself before it finished painting once.
  *
  * The three things that do make further requests all begin with a click —
- * refreshing, recomputing advice, moving or capturing a card — and each of them
- * ends by re-reading the board so the lane totals on screen stay true rather
- * than being patched up locally from a partial answer.
+ * refreshing, recomputing advice, moving or capturing a card — and none of them
+ * patches the lane totals up locally from a partial answer. Recomputing asks for
+ * the lanes in the same response (`withLanes`) and repaints from it; moving and
+ * capturing re-read the board, because both write and the record they wrote is
+ * not the only thing that changed. When an advise response comes back without
+ * lanes — an older server, or a caller that did not ask — the board is re-read
+ * exactly as it always was, which is the fail-open path and not a fallback worth
+ * apologising for.
+ *
+ * ## Saying "nothing to do" once
+ *
+ * A card in Proposal or Customer genuinely has nothing to say, and for a while
+ * this file said so four times on one card: an empty readiness bar labelled "not
+ * applicable", the readiness summary, a chip reading "Nothing to do", and the
+ * action sentence. Each string was defensible on its own; stacked, they made the
+ * two lanes where the board has no opinion look broken rather than quiet.
+ *
+ * The survivor is the action sentence, everywhere, and the reasoning is set out
+ * on `Readiness` and on `KIND_CHIP` below. In short: it is the only one of the
+ * four the AI layer may have rewritten into the workspace's own language, it is
+ * the slot a rep already reads for the instruction, and it is the only one that
+ * distinguishes a closed deal from a stage with no checklist. The readiness
+ * summary is not thrown away — it moves under "Why this", which is where a
+ * question that starts "but why is there nothing to tick" belongs.
  *
  * ## Why the AI rewrite is a separate, named button
  *
@@ -363,10 +384,29 @@ const TAG_COLOUR: Record<string, string> = {
  * file is precisely the mistake that file's own header records — two single
  * sources of truth is not one — so the board reads its chips from there and a
  * rep sees the same four words on the card as on the record.
+ *
+ * `NOTHING_TO_DO` is the one kind that gets no chip on this screen, and the
+ * option is not removed from the constant to achieve it — a view still needs to
+ * group and filter on it, and the record page still needs a word for it.
+ *
+ * A chip is a heading for the sentence under it. Every other one names a
+ * category the sentence then makes specific: "Find the buyer" over a sentence
+ * naming which buyer. "Nothing to do" over "Nothing is blocking this card and
+ * nothing on the record says what to do next" is not a heading, it is the same
+ * statement in fewer words, and it was one of the four ways this card used to
+ * say nothing. The sentence survives because it is the one that says *why* — a
+ * closed deal and a stage with no checklist read differently — and because it is
+ * the only one an AI rewrite reaches.
  */
+const CHIPLESS_KINDS: ReadonlySet<ActionKind> = new Set<ActionKind>([
+  'NOTHING_TO_DO',
+]);
+
 const KIND_CHIP: Partial<Record<ActionKind, { label: string; color: string }>> =
   Object.fromEntries(
-    NEXT_ACTION_KIND_OPTIONS.map((option) => [
+    NEXT_ACTION_KIND_OPTIONS.filter(
+      (option) => !CHIPLESS_KINDS.has(option.value),
+    ).map((option) => [
       option.value,
       { label: option.label, color: option.color },
     ]),
@@ -619,7 +659,17 @@ const GreenlightPipeline = () => {
     setBusy(withNarrative ? 'advise-ai' : 'advise');
     setNarrativeMissing(false);
 
-    const result = await post({ action: 'advise', withNarrative });
+    // Recomputing can change a card's lane as well as its sentence, and the lane
+    // totals are the server's arithmetic over every record rather than over the
+    // fifty it returned — so patching the returned cards into the board on their
+    // own would leave a header claiming a count that no longer matches the lane
+    // under it. This used to be answered by re-reading the whole board
+    // afterwards: correct, and two round trips for a caller that wanted one,
+    // each of them paging every Person and every Opportunity in the workspace.
+    //
+    // `withLanes` asks for the same lane shape `board` returns, computed by the
+    // same function on the same pass, so one response repaints the screen.
+    const result = await post({ action: 'advise', withNarrative, withLanes: true });
 
     if (!mounted.current) {
       return;
@@ -633,15 +683,34 @@ const GreenlightPipeline = () => {
     }
 
     if (result.response.action === 'advise') {
-      setReplyNotices(result.response.notices);
-      setNarrativeMissing(result.response.narrativeUnavailable);
+      const advised = result.response;
+
+      setNarrativeMissing(advised.narrativeUnavailable);
+
+      if (advised.lanes !== null) {
+        setBoard({
+          action: 'board',
+          lanes: advised.lanes,
+          notices: advised.notices,
+          generatedAt: advised.generatedAt,
+        });
+        setFailure(null);
+        // The advice notices are now the board's notices — they were computed on
+        // the same pass and describe the same read. Leaving a copy under "From
+        // your last action" as well would print every one of them twice under
+        // two headings, which is the defect this screen was just cleaned of.
+        setReplyNotices([]);
+        setBusy(null);
+
+        return;
+      }
+
+      setReplyNotices(advised.notices);
     }
 
-    // Recomputing can change a card's lane as well as its sentence, and the
-    // lane totals are the server's arithmetic over every record rather than
-    // over the fifty it returned. Patching the cards in place here would leave
-    // a header claiming a count that no longer matches the lane under it, so
-    // the board is re-read instead. It is one request, after a click.
+    // No lanes came back, so the board is re-read exactly as it always was. A
+    // server that does not answer with lanes must not leave the screen holding
+    // stale totals, and it must not leave it empty either.
     await loadBoard(withNarrative ? 'advise-ai' : 'advise');
   };
 
@@ -679,14 +748,21 @@ const GreenlightPipeline = () => {
       setMovingKey(null);
 
       void enqueueSnackbar({
-        // Where it landed according to the server, not where it was asked to
-        // go. The two are the same almost always, and when they are not, the
-        // server is the one that knows.
-        message:
-          moved.createdOpportunityId === null
-            ? `Moved to ${LANE_LABELS[moved.card.lane]}.`
-            : `Handed off to ${LANE_LABELS[moved.card.lane]}. The opportunity now exists, with the company and the point of contact taken from the lead.`,
-        variant: 'success',
+        // The server's sentence, verbatim, exactly as a failure's would be.
+        //
+        // This used to be written here, from `createdOpportunityId` and a lane
+        // label, and it could not tell a handoff that opened a deal from one
+        // that found a deal already on the lead and moved that instead — so it
+        // announced that an opportunity "now exists" for a deal that had existed
+        // for months. See `AdvanceResponse.message`.
+        message: moved.message,
+        variant:
+          moved.card.lane === toLane
+            ? 'success'
+            : // The move did not land where it was asked to. The message says
+              // where the card actually is; a green tick over it would be the
+              // component contradicting the server in the same breath.
+              'info',
       });
     }
 
@@ -1127,6 +1203,7 @@ const CardView = ({
 }) => {
   const [top, ...rest] = card.actions;
   const targets = moveTargets(card.lane);
+  const placement = summaryPlacement(card);
 
   return (
     <article style={CARD_STYLE}>
@@ -1157,7 +1234,7 @@ const CardView = ({
         {card.companyName ?? 'No company on the record'}
       </span>
 
-      <Readiness readiness={card.readiness} />
+      {placement === 'face' && <Readiness readiness={card.readiness} />}
 
       {top === undefined ? (
         // `nextAction` promises never to return an empty list, so this is the
@@ -1218,6 +1295,17 @@ const CardView = ({
               <span style={NOTE_STYLE}>{top.reason}</span>
               <span style={NOTE_STYLE}>The record says: {top.evidence}</span>
             </>
+          )}
+
+          {/*
+            The stage's own account of why it has no checklist — "a person closes
+            a deal, and Greenlight does not get a vote" — kept off the face of a
+            card whose sentence has already said there is nothing to do, and kept
+            here because "why is there nothing to tick" is a question asked by
+            clicking "Why this". See `summaryPlacement`.
+          */}
+          {placement === 'detail' && (
+            <span style={NOTE_STYLE}>{card.readiness.summary}</span>
           )}
 
           {rest.length > 0 && (
@@ -1366,25 +1454,31 @@ const ActionRow = ({
  * `percent` is `number | null`, and null means the denominator was empty — a
  * stage with no criteria, or one where every criterion was unreadable. Rendering
  * that as 0% would accuse a deal of being nowhere; rendering it as 100% would
- * call it ready. Both are claims the data does not support, so the meter is
- * replaced by the words "not applicable" and the server's summary is left to
- * say which of the two happened.
+ * call it ready. Both are claims the data does not support.
  *
- * The summary itself is rendered verbatim and is already the arithmetic — "3 of
- * 4 met — missing: close date." — so nothing here restates it in worse words.
+ * It used to draw the bar anyway, empty, and label it "not applicable". That was
+ * the first of the four ways a quiet card said nothing, and it was the worst of
+ * them: a meter with nothing in it looks like a measurement of zero however it
+ * is labelled, and a rep scanning a lane of them sees a column of failures. So
+ * when there is no denominator there is no meter — the summary alone says which
+ * of the two "we cannot say" cases happened, in words, which is what it was
+ * always doing underneath.
+ *
+ * The summary is rendered verbatim and is already the arithmetic — "3 of 4 met —
+ * missing: close date." — so nothing here restates it in worse words.
  */
 const Readiness = ({ readiness }: { readiness: StageReadiness }) => {
-  // A lane with no transition and no results has no checklist at all; three of
-  // the first four lanes are like that by design. A row reading "there is
-  // nothing to check" on every Captured card would be noise on the lane that
-  // needs the least of it.
-  if (readiness.transition === null && readiness.results.length === 0) {
-    return null;
+  const percent = readiness.percent;
+
+  if (percent === null) {
+    return (
+      <span style={{ ...NOTE_STYLE, fontSize: '11px' }}>
+        {readiness.summary}
+      </span>
+    );
   }
 
-  const percent = readiness.percent;
-  const tone =
-    percent === null ? MUTED : readiness.unmet.length === 0 ? GO : WARN;
+  const tone = readiness.unmet.length === 0 ? GO : WARN;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
@@ -1403,14 +1497,14 @@ const Readiness = ({ readiness }: { readiness: StageReadiness }) => {
           <span
             style={{
               display: 'block',
-              width: percent === null ? '0%' : `${percent}%`,
+              width: `${percent}%`,
               height: '100%',
               background: tone,
             }}
           />
         </span>
         <span style={{ color: tone, fontSize: '11px', fontWeight: 600 }}>
-          {percent === null ? 'not applicable' : `${percent}%`}
+          {percent}%
         </span>
       </div>
       <span style={{ ...NOTE_STYLE, fontSize: '11px' }}>
@@ -1418,6 +1512,50 @@ const Readiness = ({ readiness }: { readiness: StageReadiness }) => {
       </span>
     </div>
   );
+};
+
+/**
+ * Where the readiness summary goes on this card: the face, the detail, or
+ * nowhere.
+ *
+ * Three cases, and they are worth separating because the wrong answer to any of
+ * them is a card that either nags or hides something.
+ *
+ *   - **`none`** — no transition and no results. The first three lanes are like
+ *     that by design: they are derived from the lead's own state and have no
+ *     checklist to be part-way through. A line reading "There is nothing to
+ *     check at this stage" on every Captured card is noise on the lane that
+ *     needs the least of it.
+ *   - **`detail`** — the stage has a checklist in principle and no items in it,
+ *     and the ranking had nothing to say either. That is Proposal, whose
+ *     criteria are empty because PIPELINE_SPEC makes closing a deal a human's
+ *     call. The summary and the action sentence are then two ways of saying
+ *     nothing, so only one belongs on the face — and it is the sentence, which
+ *     is the slot a rep reads for the instruction and the only string the AI
+ *     layer may have rewritten into the workspace's own language. The summary is
+ *     the better *answer* though, because it says why there is nothing rather
+ *     than only that there is, so it moves under "Why this" where the question
+ *     is asked. Both are the server's words; neither is paraphrased.
+ *   - **`face`** — everything else, including the case that looks like the one
+ *     above and is not: a stage whose every criterion came back unreadable. The
+ *     summary then names them, the card would otherwise show no sign that
+ *     anything failed to load, and burying that behind a click is precisely the
+ *     silent degradation this app fails open to avoid.
+ */
+type SummaryPlacement = 'face' | 'detail' | 'none';
+
+const summaryPlacement = (card: PipelineCard): SummaryPlacement => {
+  const { readiness } = card;
+
+  if (readiness.transition === null && readiness.results.length === 0) {
+    return 'none';
+  }
+
+  return card.actions[0]?.kind === 'NOTHING_TO_DO' &&
+    readiness.total === 0 &&
+    readiness.indeterminate.length === 0
+    ? 'detail'
+    : 'face';
 };
 
 const CRITERION_TONE: Record<CriterionResult['status'], { word: string; colour: string }> =
@@ -1482,12 +1620,19 @@ const MovePanel = ({
 
       {unmet.length > 0 && (
         <>
+          {/*
+            The count and the consequence, and then each one named with its
+            evidence underneath. It used to list the labels here as well, which
+            was the same list twice in three lines — once bare, once with the
+            evidence that makes it worth reading. The named rows won: a rep
+            deciding whether to go ahead is deciding on the evidence.
+          */}
           <span style={{ color: WARN, fontSize: '12px', lineHeight: 1.5 }}>
             {unmet.length === 1
-              ? 'One thing is still outstanding:'
-              : `${unmet.length} things are still outstanding:`}{' '}
-            {listOf(unmet)}. You can move it anyway — Greenlight will record that
-            these were on screen and that you went ahead.
+              ? 'One thing is still outstanding.'
+              : `${unmet.length} things are still outstanding.`}{' '}
+            You can move it anyway — Greenlight will record what was on screen
+            and that you went ahead.
           </span>
           {unmet.map((result) => (
             <span
@@ -1529,10 +1674,13 @@ const MovePanel = ({
                 : `Move to ${LANE_LABELS[target]}`}
             </button>
             {handoff && (
+              // What the button is about to do, and that nothing else does it.
+              // What it *did* — which records were copied across, or whether a
+              // deal already existed and was moved instead — is the server's to
+              // say afterwards, and it says it in `AdvanceResponse.message`.
               <span style={{ ...NOTE_STYLE, fontSize: '11px' }}>
-                This creates the opportunity, with the company and the point of
-                contact taken from the lead. It is the only thing on this board
-                that creates one.
+                This opens the deal. It is the only thing on this board that
+                creates one.
               </span>
             )}
           </div>
@@ -1723,14 +1871,15 @@ const CaptureDrawer = ({
             <strong style={{ fontSize: '13px' }}>
               {placed.card.displayName} is in {LANE_LABELS[placed.card.lane]}
             </strong>
-            <span style={NOTE_STYLE}>
-              {placed.matchedExistingCompany
-                ? 'Linked to a company you already had.'
-                : 'Added the company as a new record.'}{' '}
-              {placed.matchedExistingPerson
-                ? 'This person was already in your CRM, so Greenlight updated that record instead of adding a second one.'
-                : 'Added the person as a new record.'}
-            </span>
+            {/*
+              The server's sentence, verbatim. This used to be assembled here
+              from the two booleans, which could say "Added the company as a new
+              record" about a capture that created no company at all — nothing
+              was typed and nothing could be inferred from the address. The chain
+              that ran knows which of the three things happened; a component
+              reading two flags is guessing at an outcome it was not present for.
+            */}
+            <span style={NOTE_STYLE}>{placed.message}</span>
             {placed.card.actions[0] !== undefined && (
               <span style={{ lineHeight: 1.5 }}>
                 {placed.card.actions[0].sentence}

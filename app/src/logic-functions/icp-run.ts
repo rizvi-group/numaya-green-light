@@ -154,10 +154,29 @@ const result = (
  * A selection of its own rather than `greenlightConfigSelection()` for one
  * reason: a workspace upgraded from a release before those columns existed still
  * has them, because metadata sync creates them — but a workspace running an
- * older *manifest* does not, and asking for a column that is not there fails the
- * whole query and would take the panel down with it. So the extended selection
- * is tried first and the shipped one is the fall-back, which also means this file
- * needs no knowledge of which release the workspace is on.
+ * older *manifest* does not, and this file should need no knowledge of which
+ * release the workspace is on.
+ *
+ * ## The fall-back below cannot fire on Twenty 2.26, and that is fine
+ *
+ * It was written believing that asking for a column that is not there fails the
+ * whole query. It does not: Twenty validates arguments and not selection sets,
+ * so an absent `icpReviewedAt` comes back `null` and the extended read succeeds
+ * everywhere. See `probeField` above for the proof and for what that assumption
+ * cost when something *depended* on it.
+ *
+ * Nothing here depends on it. The rung is kept rather than deleted for two
+ * reasons: it costs one request only in a case that cannot occur, and the
+ * asymmetry it guards against is a property of this Twenty release rather than
+ * of GraphQL — a server that tightened selection validation would make it live
+ * again. What it must not do is masquerade as the thing protecting the *write*.
+ * That is `writeIcpConfig` further down, which tries the patch with the review
+ * columns and retries without them, and which works because a mutation's `data`
+ * **is** an argument and therefore **is** validated:
+ *
+ *     Object greenlightConfig doesn't have any "icpReviewDecision" field.
+ *
+ * `reviewFieldsAvailable` is reported for the log's benefit and read by nothing.
  */
 const loadIcpConfigRecord = async (
   client: GreenlightApiClient,
@@ -205,12 +224,78 @@ const loadIcpConfigRecord = async (
  * A rejected GraphQL request normally throws out of the client, but a transport
  * that returns `{ errors, data: null }` without throwing would make every probe
  * look like a success and put non-existent field names into the sample query —
- * which would then fail for real, with no fall-back left. Checking that the
- * connection is present costs nothing and closes that path.
+ * where, since Twenty does not validate selection sets, they would come back
+ * `null` rather than failing, and the panel would report a profile derived from
+ * columns that are not there. Checking that the connection is present costs
+ * nothing and closes that path.
  */
 const answered = (response: unknown): boolean =>
   isPlainRecord(response) && isPlainRecord(response['companies']);
 
+/**
+ * A selection turned into the filter that asks whether its fields exist.
+ *
+ * `{ industry: true }` becomes `{ industry: { is: 'NOT_NULL' } }`; the composite
+ * probe `{ address: { addressCountry: true } }` becomes
+ * `{ address: { addressCountry: { is: 'NOT_NULL' } } }`. The nesting is carried
+ * over unchanged, which matters: Twenty rejects an operator applied to a
+ * composite root — `Sub field "is" not found for composite type: ADDRESS` — so a
+ * composite has to be probed at the sub-path, and the sub-path is exactly what
+ * the caller's selection already spells out.
+ *
+ * The value is never used. `NOT_NULL` over `NULL` only because it reads as the
+ * question being asked: is there such a thing.
+ */
+const existenceFilter = (
+  selection: Record<string, unknown>,
+): Record<string, unknown> =>
+  Object.fromEntries(
+    Object.entries(selection).map(([name, value]) => [
+      name,
+      isPlainRecord(value) ? existenceFilter(value) : { is: 'NOT_NULL' },
+    ]),
+  );
+
+/**
+ * Does this workspace's Company have these fields?
+ *
+ * ## Why this asks in the filter and not in the selection
+ *
+ * It used to put the candidate in the **selection set** and read "the request
+ * was not rejected" as "the field is there". Against a live Twenty that is
+ * always true, because:
+ *
+ *     Twenty validates arguments against the object's schema.
+ *     Twenty does not validate selection sets.
+ *
+ *     { companies(first: 1) { edges { node { id sector } } } }
+ *     → { "node": { "id": "…", "sector": null } }        // no such column
+ *
+ *     { companies(filter: { sector: { is: "NOT_NULL" } }) { … } }
+ *     → Object company doesn't have any "sector" field.  // rejected
+ *
+ * So every candidate answered `true` on every workspace. `probeCompanyFields`
+ * then reported *"Industry read from Company.industry, Company.sector,
+ * Company.vertical, Company.companyIndustry, Company.businessType"* — naming
+ * five columns that mostly do not exist — and put all five into the sample
+ * selection, where each came back `null`. The proposal was therefore built from
+ * nothing and explained by a note that was flatly untrue, while the one note an
+ * admin could have acted on ("this workspace has no industry field on Company …
+ * nothing can be proposed until one exists") was unreachable by construction.
+ *
+ * This is the same defect as the `taskTargets` filter in `pipeline-store.ts`,
+ * read from the other end: there, a column that came back on every row turned
+ * out not to be filterable; here, a filter that Twenty checks turns out to be
+ * the only half of a query it checks at all. Both were invisible to the unit
+ * suite because the fakes modelled the same assumption as the code.
+ *
+ * One field type is probed conservatively: a candidate that happens to be a
+ * composite (`CURRENCY`, `ADDRESS`, `LINKS`) is rejected with *"Sub field 'is'
+ * not found for composite type"* and reported absent, because the probe cannot
+ * know which sub-field to ask for. A currency-typed "industry" is not an
+ * industry field in any useful sense, and reporting "no industry field
+ * answered" is a true and actionable thing to say about it.
+ */
 const probeField = async (
   client: GreenlightApiClient,
   selection: Record<string, unknown>,
@@ -218,8 +303,8 @@ const probeField = async (
   try {
     const response = await client.query({
       companies: {
-        __args: { first: 1 },
-        edges: { node: { id: true, ...selection } },
+        __args: { first: 1, filter: existenceFilter(selection) },
+        edges: { node: { id: true } },
       },
     });
 

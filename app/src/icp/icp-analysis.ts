@@ -52,8 +52,22 @@ import { normalise } from 'src/scoring/rules/helpers';
  * see `probeCompanyFields` in `src/logic-functions/icp-run.ts`.
  *
  * A single-token list, not dotted paths: each of these is probed with its own
- * cheap query, because an unknown field name fails the whole GraphQL request and
- * one probe per candidate is the only way to learn which ones exist.
+ * cheap query, and one probe per candidate is the only way to learn which ones
+ * exist.
+ *
+ * The stated reason used to be "an unknown field name fails the whole GraphQL
+ * request". It does not. Twenty validates arguments — `filter`, `orderBy`,
+ * mutation `data` — and does **not** validate selection sets, so an unknown
+ * selected column is accepted and returns `null`. Probing by selection therefore
+ * answered "yes" for every candidate on every workspace, which is exactly the bug
+ * `probeCompanyFields` was fixed for: it named five industry fields to an admin
+ * whose Company object had none of them, and the one useful message — that this
+ * workspace has no industry field at all — could never fire.
+ *
+ * The design is unchanged and still correct; only the reason was wrong. The probe
+ * now asks the half Twenty checks (`filter: { <field>: { is: 'NOT_NULL' } }`), and
+ * one query per candidate is still needed because a single query naming all five
+ * would be rejected on the first absent one without saying which others exist.
  */
 export const COMPANY_INDUSTRY_FIELD_CANDIDATES: readonly string[] = [
   'industry',

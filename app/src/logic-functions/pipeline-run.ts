@@ -286,6 +286,11 @@ export const parsePipelineRequest = (body: unknown): ParsedRequest => {
           ? {}
           : { opportunityId: optionalString(body['opportunityId']) as string }),
         withNarrative: body['withNarrative'] === true,
+        // `=== true` rather than a truthiness check, on both flags, for the same
+        // reason: a caller that sends the string "false" gets the cheap answer,
+        // and the only way to spend a model call or a second full board read is
+        // to have meant it.
+        withLanes: body['withLanes'] === true,
       } satisfies AdviseRequest,
     };
   }
@@ -521,25 +526,31 @@ const buildBoardCards = async (
   return { cards, notices };
 };
 
-const runBoard = async (
-  deps: PipelineRunDeps,
-  request: BoardRequest,
-): Promise<PipelineRunResult> => {
-  const context = await loadContext(deps);
-  const perLane = clampPerLane(request.perLane);
-  const built = await buildBoardCards(deps, context);
-
+/**
+ * Cards into the nine lane summaries, sorted and capped.
+ *
+ * Lifted out of `runBoard` when `advise` learned to answer with lanes too (see
+ * `AdviseRequest.withLanes`). It is the same arithmetic in both places by
+ * construction rather than by discipline, which matters more here than it
+ * usually would: the whole point of the flag is that a caller can repaint from
+ * an advise response, and a repaint whose totals were computed differently from
+ * the board's would be the defect it was added to fix, one layer further down.
+ */
+const summariseLanes = (
+  cards: readonly PipelineCard[],
+  perLane: number,
+): readonly LaneSummary[] => {
   const byLane = new Map<PipelineLane, PipelineCard[]>();
 
   for (const lane of PIPELINE_LANES) {
     byLane.set(lane, []);
   }
 
-  for (const card of built.cards) {
+  for (const card of cards) {
     byLane.get(card.lane)?.push(card);
   }
 
-  const lanes: LaneSummary[] = PIPELINE_LANES.map((lane) => {
+  return PIPELINE_LANES.map((lane) => {
     const all = (byLane.get(lane) ?? []).slice().sort(byUsefulness);
 
     return {
@@ -553,10 +564,19 @@ const runBoard = async (
       cards: all.slice(0, perLane),
     };
   });
+};
+
+const runBoard = async (
+  deps: PipelineRunDeps,
+  request: BoardRequest,
+): Promise<PipelineRunResult> => {
+  const context = await loadContext(deps);
+  const perLane = clampPerLane(request.perLane);
+  const built = await buildBoardCards(deps, context);
 
   const body: BoardResponse = {
     action: 'board',
-    lanes,
+    lanes: summariseLanes(built.cards, perLane),
     notices: [...context.notices, ...built.notices],
     generatedAt: deps.now.toISOString(),
   };
@@ -604,6 +624,11 @@ const runCapture = async (
       body: {
         action: 'capture',
         card,
+        // The notice above is the explanation; this is the outcome, and the two
+        // are deliberately not the same sentence. The drawer names the record
+        // and the lane from the card itself, so what is left for the server to
+        // say is what it did with the records — which here is nothing new.
+        message: `${card.displayName} was already on your board, so nothing was created. The advice below is what the record says now.`,
         matchedExistingCompany: card.companyName !== null,
         matchedExistingPerson: true,
         notices,
@@ -697,6 +722,17 @@ const runCapture = async (
     body: {
       action: 'capture',
       card,
+      // Three outcomes, and the drawer used to guess between them from two
+      // booleans. "No company" is not the same as "a new company was created
+      // for them", and only this function knows which happened: `companyId` is
+      // null when nothing was typed and nothing could be inferred from the
+      // address, which is a record a rep may want to go and finish.
+      message:
+        company.companyId === null
+          ? `${card.displayName} was added as a new person, with no company on the record.`
+          : company.matchedExisting
+            ? `${card.displayName} was added as a new person and linked to a company you already had.`
+            : `${card.displayName} was added as a new person, and the company was added with them.`,
       matchedExistingCompany: company.matchedExisting,
       matchedExistingPerson: false,
       notices,
@@ -910,10 +946,55 @@ const runAdvance = async (
     body: {
       action: 'advance',
       card: after,
+      message: describeMove(request, before, after, createdOpportunityId),
       createdOpportunityId,
       notices,
     } satisfies AdvanceResponse,
   };
+};
+
+/**
+ * What the move actually did, in one sentence, for the person who clicked.
+ *
+ * The front component used to write this itself, from `createdOpportunityId`
+ * and a lane label: "Handed off to New. The opportunity now exists…". It was
+ * right most of the time and wrong in the two cases that matter, both of which
+ * this function can see and the component could not.
+ *
+ * **It announced success it had not been told about.** The response carries the
+ * card's *real* lane, so a stage write the workspace rejected produced a
+ * cheerful "Moved to Proposal" over a card still sitting in Meeting, with the
+ * explanation demoted to a notice underneath. That is why the first thing
+ * checked here is whether the card ended up where it was asked to go: nothing
+ * else is worth saying if it did not.
+ *
+ * **It could not tell a handoff from a no-op.** A rep looking at a card the
+ * board painted a minute ago can press "Hand off to New" on a lead a colleague
+ * has already handed off. The lane is derived from the deal, so by the time this
+ * runs the fresh read shows the deal, the branch above creates nothing, and the
+ * component would have said an opportunity "now exists" for one that has existed
+ * since March. Told plainly that the card was already there, the rep stops
+ * looking for the duplicate they think they just made.
+ */
+const describeMove = (
+  request: AdvanceRequest,
+  before: PipelineCard,
+  after: PipelineCard,
+  createdOpportunityId: string | null,
+): string => {
+  if (after.lane !== request.toLane) {
+    return `The move was recorded, but this card is still in ${LANE_LABELS[after.lane]}.`;
+  }
+
+  if (createdOpportunityId !== null) {
+    return `The deal is open in ${LANE_LABELS[after.lane]}, with the company and the point of contact taken from the lead.`;
+  }
+
+  if (before.lane === after.lane) {
+    return `This card was already in ${LANE_LABELS[after.lane]}, so nothing on it changed.`;
+  }
+
+  return `Moved from ${LANE_LABELS[before.lane]} to ${LANE_LABELS[after.lane]}.`;
 };
 
 /**
@@ -1034,6 +1115,14 @@ const runAdvise = async (
   const notices: string[] = [...context.notices];
 
   let cards: readonly PipelineCard[];
+  /**
+   * Every card the board would show, when this call already had to build them.
+   *
+   * Board-wide advice reads the whole workspace anyway, so the lanes are a free
+   * regroup of `cards`. Advising one card is left null here and only goes back
+   * for the board if `withLanes` was asked for — see below.
+   */
+  let boardCards: readonly PipelineCard[] | null = null;
 
   if (request.leadId !== undefined || request.opportunityId !== undefined) {
     const resolved = await resolveCardSubject(deps, context, {
@@ -1056,6 +1145,7 @@ const runAdvise = async (
     const built = await buildBoardCards(deps, context);
 
     cards = built.cards;
+    boardCards = built.cards;
     notices.push(...built.notices);
   }
 
@@ -1114,15 +1204,112 @@ const runAdvise = async (
     );
   }
 
+  /* The lanes, when the caller means to repaint from this one answer ---------- */
+
+  let lanes: readonly LaneSummary[] | null = null;
+
+  if (request.withLanes === true) {
+    if (boardCards === null) {
+      // A single-card advise has read one Person and its deals, so there is no
+      // board here to regroup and the whole workspace has to be paged. That is
+      // the same work the caller's second round trip would have done, which is
+      // exactly why this is a flag and not the default.
+      //
+      // Fail-open: if that read comes back short, the notices say so and the
+      // lanes are still returned. Refusing to answer with lanes because one page
+      // failed would send the caller back for a board that would fail the same
+      // way, and an empty board is the one outcome this file will not produce.
+      const built = await buildBoardCards(deps, context);
+
+      boardCards = built.cards;
+      notices.push(...built.notices);
+    }
+
+    // The advised cards win over the board's own copy of the same record. They
+    // are the ones the narrative layer may have rewritten, and on a single-card
+    // advise they are the ones the caller asked about; a lane holding the board's
+    // untouched version of a card the response also returns would put two
+    // different sentences for one record in one payload.
+    lanes = summariseLanes(
+      overlayAdvisedCards(boardCards, narrated.cards),
+      clampPerLane(undefined),
+    );
+  }
+
   return {
     status: 200,
     body: {
       action: 'advise',
       cards: narrated.cards,
+      lanes,
       narrativeUnavailable: narrated.unavailable,
       notices,
+      generatedAt: deps.now.toISOString(),
     } satisfies AdviseResponse,
   };
+};
+
+/**
+ * The advised cards, laid over the board's own cards for the same records.
+ *
+ * Identity by whichever id the card has, in the order a card is identified
+ * everywhere else in this file: a card is a Person, or a deal, or both, and
+ * matching on either id is enough because no two cards on one board share one.
+ * A board card the advice did not cover is kept as it was, and an advised card
+ * the board did not return — a lead outside the page allowance, say — is
+ * appended rather than dropped, because the caller asked about it and a lane
+ * that quietly omitted it would be the failure `notices` exists to prevent.
+ */
+const overlayAdvisedCards = (
+  boardCards: readonly PipelineCard[],
+  advised: readonly PipelineCard[],
+): readonly PipelineCard[] => {
+  if (advised.length === 0) {
+    return boardCards;
+  }
+
+  const keyed = new Map<string, PipelineCard>();
+
+  for (const card of advised) {
+    if (card.leadId !== null) {
+      keyed.set(`person:${card.leadId}`, card);
+    }
+
+    if (card.opportunityId !== null) {
+      keyed.set(`deal:${card.opportunityId}`, card);
+    }
+  }
+
+  const used = new Set<PipelineCard>();
+
+  const merged = boardCards.map((card) => {
+    const match =
+      (card.leadId === null ? undefined : keyed.get(`person:${card.leadId}`)) ??
+      (card.opportunityId === null
+        ? undefined
+        : keyed.get(`deal:${card.opportunityId}`));
+
+    if (match === undefined) {
+      return card;
+    }
+
+    used.add(match);
+
+    return match;
+  });
+
+  return [
+    ...merged,
+    // A card carrying neither id is unaddressable, so it cannot be matched and
+    // must not be appended: on a board-wide advise it is already in `merged`,
+    // and appending it would put the same card in a lane twice and inflate the
+    // total the lane heading reports.
+    ...advised.filter(
+      (card) =>
+        !used.has(card) &&
+        (card.leadId !== null || card.opportunityId !== null),
+    ),
+  ];
 };
 
 /* -------------------------------------------------------------------------- */

@@ -4,7 +4,7 @@ import {
   parsePipelineRequest,
   runPipelineCommand,
 } from 'src/logic-functions/pipeline-run';
-import { HANDOFF_FROM, HANDOFF_TO } from 'src/pipeline/wire';
+import { HANDOFF_FROM, HANDOFF_TO, LANE_LABELS } from 'src/pipeline/wire';
 import type {
   AdvanceRequest,
   AdvanceResponse,
@@ -144,6 +144,66 @@ describe('advance', () => {
         'not a lane a card can be dropped into',
       );
       expect(auditRows(client)).toHaveLength(1);
+    });
+  });
+
+  /**
+   * The success copy, which used to be written in the front component from
+   * `createdOpportunityId` and a lane label. It was right most of the time and
+   * wrong in the two cases these tests name.
+   */
+  describe('what it says happened', () => {
+    it('should say the deal is open, and what was carried across, when the handoff created one', async () => {
+      const { body } = await advance({ people: [aPerson()] });
+
+      expect((body as AdvanceResponse).message).toBe(
+        'The deal is open in New, with the company and the point of contact taken from the lead.',
+      );
+    });
+
+    it('should not claim a deal now exists when it already did', async () => {
+      // A rep pressing "Hand off to New" on a card the board painted before a
+      // colleague handed the same lead off. Nothing is created; saying an
+      // opportunity "now exists" would send them hunting for a duplicate.
+      const { client, body } = await advance(
+        { people: [aPerson()], opportunities: [anOpportunity({ stage: 'NEW' })] },
+        { toLane: HANDOFF_TO },
+      );
+
+      expect(client.created['createOpportunity']).toBeUndefined();
+      expect((body as AdvanceResponse).message).toBe(
+        'This card was already in New, so nothing on it changed.',
+      );
+    });
+
+    it('should say where the card actually is when the write was rejected', async () => {
+      const { body } = await advance(
+        {
+          people: [aPerson()],
+          opportunities: [anOpportunity()],
+          failMutations: ['updateOpportunity'],
+        },
+        { toLane: 'proposal' },
+      );
+
+      const moved = body as AdvanceResponse;
+
+      // The message and the card agree, and neither of them says "Proposal".
+      expect(moved.card.lane).not.toBe('proposal');
+      expect(moved.message).toBe(
+        `The move was recorded, but this card is still in ${LANE_LABELS[moved.card.lane]}.`,
+      );
+    });
+
+    it('should name both ends of an ordinary stage move', async () => {
+      const { body } = await advance(
+        { people: [aPerson()], opportunities: [anOpportunity({ stage: 'NEW' })] },
+        { toLane: 'screening' },
+      );
+
+      expect((body as AdvanceResponse).message).toBe(
+        'Moved from New to Screening.',
+      );
     });
   });
 

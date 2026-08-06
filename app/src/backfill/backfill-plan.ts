@@ -187,10 +187,28 @@ const FIELD_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
  * is not a plain GraphQL identifier is dropped rather than interpolated — a
  * config field is admin-supplied text, and it is one query away from the schema.
  *
- * A name that passes the regex but does not exist still fails the query, which is
- * why `backfill-run.ts` retries the page without extras before giving up. Getting
- * a slightly less accurate score is recoverable; stalling the backfill on a typo
- * in a settings field is not.
+ * ## What a typo in a configured name actually does
+ *
+ * This used to read: "a name that passes the regex but does not exist still fails
+ * the query, which is why `backfill-run.ts` retries the page without extras
+ * before giving up." That is wrong, and it was wrong in the direction that hides
+ * the problem.
+ *
+ * Proved against a live instance (`src/__live__/api-contract.live-test.ts`):
+ * **Twenty validates arguments and does not validate selection sets.** A `filter`
+ * or `orderBy` naming a column the object lacks is rejected outright; a
+ * *selected* column the object lacks is accepted and comes back `null`.
+ *
+ * These names only ever reach the selection. So a typo in a settings field does
+ * not fail the page and does not trip the retry ladder — the query succeeds, the
+ * column arrives as `null`, and the engine scores the record as though the human
+ * had left that field blank. The backfill runs to completion, reports success,
+ * and produces quietly worse scores across the whole workspace.
+ *
+ * That is a real defect and it is not this function's to fix: the mapping is
+ * validated where it is written, not where it is read. Recorded here because the
+ * comment that used to be here asserted the opposite and would have sent the next
+ * reader looking at the retry ladder for a rung that cannot fire.
  */
 export const configuredSelectionFields = (
   configRecord: unknown,
@@ -330,10 +348,21 @@ export const buildPageRequest = ({
  *
  *   1. **Everything.** Ordered, cursored, with the workspace's configured field
  *      names in the selection.
- *   2. **Without the configured names.** By far the likeliest failure — those
- *      strings come from a settings field and are not validated against the
- *      schema anywhere. Costs a little scoring accuracy on a customised
- *      workspace; a degradation is logged.
+ *   2. **Without the configured names.** This rung is, on Twenty 2.26,
+ *      **unreachable**, and the comment that used to be here said the opposite —
+ *      "by far the likeliest failure". Configured names only ever enter the
+ *      *selection*, and Twenty does not validate selection sets: an unknown
+ *      column is accepted and returns `null`. So a mistyped mapping cannot reject
+ *      a page, and this rung cannot be the thing that saves it. See
+ *      `configuredSelectionFields` for what a typo does instead, which is worse
+ *      than a failed page and much quieter.
+ *
+ *      It stays in the ladder for two reasons. It is free — a rung that never
+ *      fires costs one unreached branch — and it is the correct response if a
+ *      future Twenty starts validating selections, which is the stricter and more
+ *      likely direction for that behaviour to move. The live contract test
+ *      exercises every rung, so this note stops being true the moment it stops
+ *      being true.
  *   3. **Unordered and uncursored.** Only reachable in `unscored` mode, and it
  *      works there because that mode's filter *is* the queue: a record the tick
  *      scores stops matching `greenlightDecision is NULL`, so repeatedly asking
