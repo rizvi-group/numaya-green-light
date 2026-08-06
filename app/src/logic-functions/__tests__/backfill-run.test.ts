@@ -129,6 +129,15 @@ const createWorkspace = (
     rejectOrderBy?: boolean;
     failConfigRead?: boolean;
     config?: Record<string, unknown>;
+    /**
+     * Columns Person does not have. Naming one in a **filter** is rejected, the
+     * way a real Twenty rejects it; naming one in a **selection** is accepted and
+     * comes back `null`, which is the defect the mapping check exists to expose
+     * and which the rest of this fake already models by ignoring the name.
+     */
+    absentFields?: readonly string[];
+    /** Columns that exist but are composite, so `is` cannot be applied to them. */
+    compositeFields?: readonly string[];
   } = {},
 ): FakeWorkspace => {
   const auditRows: Record<string, unknown>[] = [];
@@ -157,6 +166,21 @@ const createWorkspace = (
 
       const spec = request['people'] as Record<string, unknown>;
       const args = (spec['__args'] ?? {}) as Record<string, unknown>;
+
+      for (const key of Object.keys(
+        (args['filter'] ?? {}) as Record<string, unknown>,
+      )) {
+        if ((options.absentFields ?? []).includes(key)) {
+          throw new Error(`Object person doesn't have any "${key}" field.`);
+        }
+
+        if ((options.compositeFields ?? []).includes(key)) {
+          throw new Error(
+            `Sub field "is" not found for composite type: ${key.toUpperCase()}`,
+          );
+        }
+      }
+
       const matching = people.filter((person) =>
         applyFilter(person, args['filter']),
       );
@@ -1096,6 +1120,230 @@ describe('the control surface', () => {
       mode: 'all',
       requestedBy: 'Workspace member 7',
     });
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* The field-mapping check                                                     */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * A configured field name that does not exist is accepted in a selection and
+ * comes back `null`, so the backfill runs to completion, reports success, and
+ * scores the whole workspace as though a human had left that field blank. These
+ * are the tests for the thing that makes that visible.
+ */
+describe('startBackfill — the configured field mapping', () => {
+  const mappingRow = (workspace: FakeWorkspace) =>
+    workspace.auditRows.find(
+      (candidate) =>
+        (candidate['ruleTrace'] as Record<string, unknown>)['action'] ===
+        'field_mapping_check',
+    );
+
+  it('should tell an admin which name is missing, and what it costs', async () => {
+    const workspace = createWorkspace([strongPerson(1)], {
+      config: { decisionMakerFieldName: 'jobTitl' },
+      absentFields: ['jobTitl'],
+    });
+
+    const result = await startBackfill({
+      client: workspace.client,
+      store: createFakeStore(),
+      now: NOW,
+      mode: 'unscored',
+      requestedBy: 'Workspace member 7',
+    });
+
+    expect(result.body.outcome).toBe('started');
+    expect(result.body.message).toContain('“jobTitl” (Decision-maker field)');
+    expect(result.body.message).toContain('is not a field on Person');
+    expect(result.body.message).toContain(
+      'scored as though it had no job title',
+    );
+    // The notice leads; the confirmation still arrives, because the run did
+    // start and refusing to start would trade a quiet defect for a loud one.
+    expect(result.body.message).toContain('Backfill started over 1 records.');
+    expect(result.body.message.indexOf('“jobTitl”')).toBeLessThan(
+      result.body.message.indexOf('Backfill started'),
+    );
+  });
+
+  it('should file it as ERROR, not as a backfill event', async () => {
+    const workspace = createWorkspace([strongPerson(1)], {
+      config: { optOutFieldNames: ['gdprOptOut'] },
+      absentFields: ['gdprOptOut'],
+    });
+
+    await startBackfill({
+      client: workspace.client,
+      store: createFakeStore(),
+      now: NOW,
+      mode: 'unscored',
+      requestedBy: 'Workspace member 7',
+    });
+
+    const row = mappingRow(workspace);
+
+    // An admin filtering the audit log for faults filters for ERROR. Sharing
+    // BACKFILL would bury the one row that says the scores are wrong under the
+    // routine ones that say bulk scoring happened.
+    expect(row?.['eventType']).toBe('ERROR');
+    expect(row?.['name']).toBe(
+      'ERROR · Greenlight field mapping · “gdprOptOut” is not a field on Person',
+    );
+    expect(row?.['ruleTrace']).toMatchObject({
+      leadObjectNameSingular: 'person',
+      missing: [
+        {
+          name: 'gdprOptOut',
+          setting: 'optOutFieldNames',
+          logicalKey: 'optedOut',
+        },
+      ],
+    });
+  });
+
+  it('should say nothing at all when every configured name exists', async () => {
+    const workspace = createWorkspace([strongPerson(1)], {
+      config: { decisionMakerFieldName: 'jobTitle' },
+    });
+
+    const result = await startBackfill({
+      client: workspace.client,
+      store: createFakeStore(),
+      now: NOW,
+      mode: 'unscored',
+      requestedBy: 'Workspace member 7',
+    });
+
+    expect(result.body.message).toBe(
+      'Backfill started over 1 records. It runs 30 a minute in the background; you can close this panel.',
+    );
+    expect(mappingRow(workspace)).toBeUndefined();
+  });
+
+  it('should not accuse a composite column of not existing', async () => {
+    // `Sub field "is" not found for composite type: EMAILS` means the field is
+    // there and the probe cannot ask about it this way. Reporting a column an
+    // admin can see on the record page is how a warning becomes furniture.
+    const workspace = createWorkspace([strongPerson(1)], {
+      config: { optOutFieldNames: ['emails'] },
+      compositeFields: ['emails'],
+    });
+
+    const result = await startBackfill({
+      client: workspace.client,
+      store: createFakeStore(),
+      now: NOW,
+      mode: 'unscored',
+      requestedBy: 'Workspace member 7',
+    });
+
+    expect(result.body.message).not.toContain('field mapping');
+    expect(mappingRow(workspace)).toBeUndefined();
+  });
+
+  it('should start the run exactly as before when the check itself cannot run', async () => {
+    // Fail-open is the whole contract. A validation that can break scoring is
+    // worse than the defect it was written to catch.
+    const workspace = createWorkspace([strongPerson(1)], {
+      failConfigRead: true,
+    });
+    const store = createFakeStore();
+
+    const result = await startBackfill({
+      client: workspace.client,
+      store,
+      now: NOW,
+      mode: 'unscored',
+      requestedBy: 'Workspace member 7',
+    });
+
+    expect(result.body.outcome).toBe('started');
+    expect(result.body.message).toBe(
+      'Backfill started over 1 records. It runs 30 a minute in the background; you can close this panel.',
+    );
+    expect((store.peek() as Record<string, unknown>)['status']).toBe('running');
+    expect(mappingRow(workspace)).toBeUndefined();
+  });
+
+  it('should spend one request per configured name and no more', async () => {
+    const workspace = createWorkspace([strongPerson(1)], {
+      config: {
+        decisionMakerFieldName: 'jobTitle',
+        readyForOutreachFieldName: 'leadStatus',
+        optOutFieldNames: ['gdprOptOut', 'jobTitle'],
+      },
+    });
+
+    await startBackfill({
+      client: workspace.client,
+      store: createFakeStore(),
+      now: NOW,
+      mode: 'unscored',
+      requestedBy: 'Workspace member 7',
+    });
+
+    // Three distinct names — `jobTitle` is configured twice and probed once.
+    const probes = workspace.queries.filter((query) => {
+      const spec = query['people'] as Record<string, unknown> | undefined;
+      const args = spec?.['__args'] as Record<string, unknown> | undefined;
+      const filter = (args?.['filter'] ?? {}) as Record<string, unknown>;
+
+      return Object.values(filter).some(
+        (clause) =>
+          typeof clause === 'object' &&
+          clause !== null &&
+          (clause as Record<string, unknown>)['is'] === 'NOT_NULL',
+      );
+    });
+
+    expect(probes).toHaveLength(3);
+  });
+
+  it('should not spend a single probe on a run it refuses to start', async () => {
+    const store = createFakeStore();
+    const workspace = createWorkspace([strongPerson(1)], {
+      config: { decisionMakerFieldName: 'jobTitl' },
+      absentFields: ['jobTitl'],
+    });
+
+    await startBackfill({
+      client: workspace.client,
+      store,
+      now: NOW,
+      mode: 'unscored',
+      requestedBy: 'Workspace member 7',
+    });
+
+    const before = workspace.queries.length;
+
+    const second = await startBackfill({
+      client: workspace.client,
+      store,
+      now: later(1),
+      mode: 'unscored',
+      requestedBy: 'Workspace member 7',
+    });
+
+    expect(second.body.outcome).toBe('already_running');
+    // One count query for the panel, and nothing else: the mapping has not
+    // changed since a minute ago and re-asking would be a schema probe on a
+    // path an impatient admin can hit as often as they like.
+    expect(workspace.queries.length - before).toBe(1);
+  });
+
+  it('should reach the install path without a second implementation', async () => {
+    const store = createFakeStore();
+    const workspace = createWorkspace([strongPerson(1)], {
+      config: { decisionMakerFieldName: 'jobTitl' },
+      absentFields: ['jobTitl'],
+    });
+
+    await requestInstallBackfill({ client: workspace.client, store, now: NOW });
+
+    expect(mappingRow(workspace)?.['eventType']).toBe('ERROR');
   });
 });
 

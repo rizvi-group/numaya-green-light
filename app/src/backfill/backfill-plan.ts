@@ -9,6 +9,7 @@
  * the Person selection and why it is exactly that wide, and the keyset cursor.
  */
 
+import { mappedFieldNames } from 'src/backfill/field-mapping-check';
 import { isPlainRecord } from 'src/logic-functions/greenlight-api';
 
 import type { BackfillCursor, BackfillMode } from 'src/backfill/backfill-state';
@@ -176,8 +177,6 @@ export const backfillPersonSelection = (
   return selection;
 };
 
-const FIELD_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
-
 /**
  * The Layer 3 field names a workspace has pointed Greenlight at, so a customised
  * workspace scores the same in bulk as it does on an event.
@@ -186,6 +185,11 @@ const FIELD_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
  * names it does not know are exactly the ones an admin configured. Anything that
  * is not a plain GraphQL identifier is dropped rather than interpolated — a
  * config field is admin-supplied text, and it is one query away from the schema.
+ * That filtering, and the provenance of each name, now live in
+ * `field-mapping-check.ts`, which needs to know not just *which* names reach a
+ * request but *which setting* each one was typed into. One list, one owner: the
+ * names this function puts in a selection are by construction the names that
+ * module probes.
  *
  * ## What a typo in a configured name actually does
  *
@@ -205,40 +209,16 @@ const FIELD_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
  * had left that field blank. The backfill runs to completion, reports success,
  * and produces quietly worse scores across the whole workspace.
  *
- * That is a real defect and it is not this function's to fix: the mapping is
- * validated where it is written, not where it is read. Recorded here because the
- * comment that used to be here asserted the opposite and would have sent the next
- * reader looking at the retry ladder for a rung that cannot fire.
+ * It is still not this function's job to fix that — a page builder that started
+ * probing the schema would put a round trip on the path a tick takes every
+ * minute. It is fixed one level up and once per run: `startBackfill` in
+ * `backfill-run.ts` asks Twenty whether each of these names exists, using the
+ * half of a query Twenty actually checks, and reports the ones that do not to the
+ * panel and the audit log. See `field-mapping-check.ts` for why the probe is a
+ * filter and never a selection.
  */
-export const configuredSelectionFields = (
-  configRecord: unknown,
-): string[] => {
-  if (!isPlainRecord(configRecord)) {
-    return [];
-  }
-
-  const names: string[] = [];
-
-  for (const key of ['decisionMakerFieldName', 'readyForOutreachFieldName']) {
-    const value = configRecord[key];
-
-    if (typeof value === 'string' && FIELD_NAME.test(value.trim())) {
-      names.push(value.trim());
-    }
-  }
-
-  const optOutFields = configRecord['optOutFieldNames'];
-
-  if (Array.isArray(optOutFields)) {
-    for (const value of optOutFields) {
-      if (typeof value === 'string' && FIELD_NAME.test(value.trim())) {
-        names.push(value.trim());
-      }
-    }
-  }
-
-  return [...new Set(names)];
-};
+export const configuredSelectionFields = (configRecord: unknown): string[] =>
+  mappedFieldNames(configRecord).map((mapped) => mapped.name);
 
 /* -------------------------------------------------------------------------- */
 /* The page request                                                            */

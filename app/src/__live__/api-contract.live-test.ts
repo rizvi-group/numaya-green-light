@@ -105,6 +105,7 @@ import {
   PAGE_ATTEMPTS,
 } from 'src/backfill/backfill-plan';
 import { BACKFILL_MODES } from 'src/backfill/backfill-state';
+import { classifyProbeRejection } from 'src/backfill/field-mapping-check';
 import { greenlightConfigSelection } from 'src/logic-functions/greenlight-config-record';
 import type { GreenlightApiClient } from 'src/logic-functions/greenlight-api';
 import { probeCompanyFields, proposeIcpForWorkspace } from 'src/logic-functions/icp-run';
@@ -392,7 +393,21 @@ const withoutArguments = (value: unknown): unknown => {
   );
 };
 
-const rejects = async (remote: Remote, document: string): Promise<boolean> => {
+/**
+ * The first error message a document produces, or null if it was accepted.
+ *
+ * `rejects` answers whether Twenty refused. This answers *how it said so*, and
+ * the distinction became load-bearing when `src/backfill/field-mapping-check.ts`
+ * started classifying rejections by their text. That check is the only thing
+ * standing between an admin and a mistyped field mapping scoring their whole
+ * workspace as blanks — and because it fails open, a Twenty release that reworded
+ * its "no such field" error would switch the check off silently. Exactly the
+ * failure mode this whole file exists to make loud.
+ */
+const rejectionMessage = async (
+  remote: Remote,
+  document: string,
+): Promise<string | null> => {
   const response = await fetch(`${remote.apiUrl}/graphql`, {
     method: 'POST',
     headers: {
@@ -402,10 +417,21 @@ const rejects = async (remote: Remote, document: string): Promise<boolean> => {
     body: JSON.stringify({ query: document }),
   });
 
-  const body = (await response.json()) as { errors?: readonly unknown[] };
+  const body = (await response.json()) as {
+    errors?: readonly { message?: unknown }[];
+  };
 
-  return (body.errors ?? []).length > 0;
+  const first = (body.errors ?? [])[0];
+
+  if (first === undefined) {
+    return null;
+  }
+
+  return typeof first.message === 'string' ? first.message : '';
 };
+
+const rejects = async (remote: Remote, document: string): Promise<boolean> =>
+  (await rejectionMessage(remote, document)) !== null;
 
 interface Verdict {
   readonly document: string;
@@ -766,6 +792,45 @@ describe.skipIf(!LIVE)('every read this app issues', () => {
         ),
         'Twenty now rejects unknown selection fields — the field probes in `icp-run.ts` and `pipeline-store.ts` could be simplified, and the fall-back rungs they stopped relying on are live again',
       ).toBe(false);
+    });
+
+    /*
+     * The two below guard the *wording*, not the behaviour, because
+     * `field-mapping-check.ts` classifies a rejection by reading its text — the
+     * only signal Twenty offers for "is this a real column".
+     *
+     * That check fails open by design: anything it cannot classify is reported to
+     * nobody and scoring proceeds untouched. Which means a reworded error does
+     * not break it, it *disables* it, and the admin whose mapping has a typo goes
+     * back to having their whole workspace scored as blanks with no warning. A
+     * silent regression in the thing built to end a silent regression.
+     *
+     * One test proves it can still fire. The other proves it cannot fire wrongly
+     * — telling somebody that `emails`, which they can see on the record page,
+     * does not exist would turn every future notice into furniture.
+     */
+    it('rejects an unknown filter field in words the mapping check can read', async () => {
+      const message = await rejectionMessage(
+        remote,
+        'query { people(first: 1, filter: { greenlightNoSuchColumn: { is: "NOT_NULL" } }) { edges { node { id } } } }',
+      );
+
+      expect(
+        classifyProbeRejection('greenlightNoSuchColumn', message ?? ''),
+        `Twenty reworded its "no such field" rejection to «${message}». ABSENT_PHRASES in src/backfill/field-mapping-check.ts no longer recognises it, so the mapping check in startBackfill has quietly switched itself off — fail-open as designed, and invisible everywhere except here.`,
+      ).toBe('absent');
+    });
+
+    it('rejects `is` on a composite in words the mapping check reads as present', async () => {
+      const message = await rejectionMessage(
+        remote,
+        'query { people(first: 1, filter: { emails: { is: "NOT_NULL" } }) { edges { node { id } } } }',
+      );
+
+      expect(
+        classifyProbeRejection('emails', message ?? ''),
+        `A composite column now classifies as «${classifyProbeRejection('emails', message ?? '')}» off the message «${message}». If that is "absent", the check will tell admins a field they can see on the record page does not exist, and they will stop reading its notices.`,
+      ).toBe('present');
     });
   });
 });

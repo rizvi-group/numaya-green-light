@@ -68,6 +68,20 @@ import {
   toScoringEvent,
 } from 'src/backfill/backfill-plan';
 import {
+  buildFieldExistenceProbe,
+  classifyProbeRejection,
+  describeFieldMappingFindings,
+  EMPTY_FIELD_MAPPING_CHECK,
+  fieldMappingAuditDetail,
+  fieldMappingAuditName,
+  FIELD_MAPPING_PROBE_LIMIT,
+  mappedFieldNames,
+  probeAnswered,
+  type FieldMappingCheckResult,
+  type FieldProbeVerdict,
+  type MappingFinding,
+} from 'src/backfill/field-mapping-check';
+import {
   beginBackfill,
   cancelBackfill as cancelBackfillState,
   claimLease,
@@ -93,6 +107,7 @@ import {
   type CalibrationReaderPort,
   type CalibrationSealPort,
 } from 'src/calibration';
+import { readLeadObjectNameSingular } from 'src/logic-functions/greenlight-config-record';
 import {
   loadConfigRecord,
   runPersonScoring,
@@ -186,12 +201,22 @@ const countMatching = async (
  *
  * Swallows every failure, like its counterpart in `install-run.ts`: a missing
  * provenance row is not worth failing a backfill over.
+ *
+ * `eventType` is a parameter with a default rather than a constant because this
+ * module files rows of two kinds. A backfill starting, progressing and finishing
+ * is `BACKFILL`. A configured field name that does not exist is not a backfill
+ * event at all — it is a fault an admin has to act on, and an admin filtering the
+ * audit log for faults filters for `ERROR`. Making it share `BACKFILL` would bury
+ * the one row in this app that says "your scores are wrong" underneath the
+ * routine ones that say "bulk scoring happened", which is the same argument the
+ * object's own `eventType` comment makes about SUPPRESSED and UNSUPPRESSED.
  */
 const writeBackfillAuditRow = async (
   client: GreenlightApiClient,
   now: Date,
   summary: string,
   detail: Record<string, unknown>,
+  eventType: 'BACKFILL' | 'ERROR' = 'BACKFILL',
 ): Promise<void> => {
   try {
     await client.mutation({
@@ -199,7 +224,7 @@ const writeBackfillAuditRow = async (
         __args: {
           data: {
             name: summary,
-            eventType: 'BACKFILL',
+            eventType,
             occurredAt: now.toISOString(),
             leadObjectNameSingular: '',
             leadRecordId: null,
@@ -222,6 +247,120 @@ const writeBackfillAuditRow = async (
       summary,
       error: describeError(error),
     });
+  }
+};
+
+/* -------------------------------------------------------------------------- */
+/* Does the configured field mapping name fields that exist?                   */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The connection the backfill actually walks, and what to call it on screen.
+ *
+ * Hard-coded rather than derived from `leadObjectNameSingular`, and deliberately:
+ * `buildPageRequest` walks `people` and nothing else, and v0.1 writes score,
+ * decision and trace fields to Person only. Probing whichever object the SELECT
+ * happens to name would ask about a schema this run is not going to read, and
+ * would tell an admin their mapping is fine for records that are not being
+ * scored at all. The configured object name still reaches the audit row, where
+ * "which object did it mean" is a question worth being able to answer.
+ */
+const LEAD_CONNECTION = 'people';
+const LEAD_OBJECT_LABEL = 'Person';
+
+/**
+ * One name, one question, in the half of a query Twenty validates.
+ *
+ * A response that came back but carries no connection is `inconclusive`, not
+ * `absent`: see `probeAnswered`. Every rejection is handed to the pure
+ * classifier, which is where the decision to stay quiet unless certain lives.
+ */
+const probeFieldExists = async (
+  client: GreenlightApiClient,
+  fieldName: string,
+): Promise<FieldProbeVerdict> => {
+  try {
+    const response = await client.query(
+      buildFieldExistenceProbe(LEAD_CONNECTION, fieldName),
+    );
+
+    return probeAnswered(LEAD_CONNECTION, response) ? 'present' : 'inconclusive';
+  } catch (error) {
+    return classifyProbeRejection(fieldName, describeError(error));
+  }
+};
+
+/**
+ * Ask about every configured name, one at a time.
+ *
+ * Serial rather than `Promise.all`, for the same reason `icp-run.ts` probes
+ * serially: eight simultaneous requests is a burst against a per-minute ceiling
+ * the live scoring path is also drawing on, and there is nothing to hurry for —
+ * this runs once, on a click, before a job that will take hours.
+ *
+ * Exported so the check can be unit-tested against a fake client without going
+ * through a whole run.
+ */
+export const checkFieldMapping = async (
+  client: GreenlightApiClient,
+  configRecord: unknown,
+): Promise<FieldMappingCheckResult> => {
+  const mapped = mappedFieldNames(configRecord);
+  const asked = mapped.slice(0, FIELD_MAPPING_PROBE_LIMIT);
+
+  const missing: MappingFinding[] = [];
+  let inconclusive = 0;
+
+  for (const candidate of asked) {
+    const verdict = await probeFieldExists(client, candidate.name);
+
+    if (verdict === 'absent') {
+      missing.push(candidate);
+    } else if (verdict === 'inconclusive') {
+      inconclusive += 1;
+    }
+  }
+
+  return {
+    missing,
+    probed: asked.length,
+    inconclusive,
+    unchecked: mapped.length - asked.length,
+  };
+};
+
+/**
+ * The whole check, wrapped so that it cannot cost the caller anything.
+ *
+ * Reads the config record itself rather than taking one, because the only caller
+ * is `startBackfill`, which has no reason to hold a config otherwise — and
+ * because the read has to be inside the `try` that makes this fail-open. If
+ * anything at all goes wrong, from the config read to the last probe, the result
+ * is the empty one: no findings, no notice, no audit row, and a backfill that
+ * behaves precisely as it did before this check existed.
+ *
+ * That is the ordering rule the whole feature is built on. A validation that can
+ * break scoring is worse than the defect it was written to catch.
+ */
+const runFieldMappingCheck = async (
+  client: GreenlightApiClient,
+): Promise<{
+  readonly result: FieldMappingCheckResult;
+  readonly configRecord: Record<string, unknown> | null;
+}> => {
+  try {
+    const configRecord = await loadConfigRecord(client);
+
+    return {
+      result: await checkFieldMapping(client, configRecord),
+      configRecord,
+    };
+  } catch (error) {
+    logGreenlight('backfill_field_mapping_check_failed', {
+      error: describeError(error),
+    });
+
+    return { result: EMPTY_FIELD_MAPPING_CHECK, configRecord: null };
   }
 };
 
@@ -699,6 +838,45 @@ export interface StartBackfillInput extends BackfillDeps {
  * the caller asked for a backfill and there is a backfill, so the honest answer
  * is to show them the one that exists. Starting a second would double the request
  * rate against a limit the first is already sized against.
+ *
+ * ============================================================================
+ * ## Why the field-mapping check happens here
+ *
+ * A configured field name that does not exist comes back `null` rather than
+ * failing anything (`field-mapping-check.ts` has the whole story). Somewhere has
+ * to notice. Four places could:
+ *
+ *   - **On the per-record scoring path.** Never. Scoring one lead must not gain a
+ *     schema round trip to answer a question whose answer changes about once a
+ *     year. The mapping changes rarely; that path runs constantly.
+ *   - **On each backfill tick.** Same objection in slower motion. A run is
+ *     thousands of ticks, the answer is identical on every one of them, and the
+ *     probes would be spent against the same per-minute ceiling the chunk
+ *     arithmetic already budgets 62 of.
+ *   - **On the config record's write path.** There is no such path to hook. The
+ *     record is edited by a human on Twenty's own record page and this app
+ *     registers no database-event function against it; adding one would mean a
+ *     schema probe on every field save, and it would still say nothing about the
+ *     workspaces that were already mis-configured before this shipped.
+ *   - **On the panel's status poll.** The panel polls `readBackfillStatus` while
+ *     a run is going. A probe there is a schema query every few seconds, for a
+ *     fact that has not moved.
+ *
+ * **Here**, once per run, is the moment the question is actually being asked:
+ * this is where a whole workspace gets scored against this mapping in one go, so
+ * it is where a wrong mapping does its damage all at once. It is also the moment
+ * an admin is looking — they pressed Start and are reading the reply. And because
+ * `requestInstallBackfill` routes through this function, install and upgrade are
+ * covered by the same code without a second implementation, as is the re-score
+ * `icp-run.ts` kicks off after a profile is applied.
+ *
+ * ## What it costs
+ *
+ * One config read plus one `first: 1` query per configured name, capped at
+ * `FIELD_MAPPING_PROBE_LIMIT`, once, on a human's click. A stock workspace has a
+ * single configured name (`decisionMakerFieldName`, seeded `jobTitle`), so the
+ * usual bill is two requests before a job that will run for hours. Nothing here
+ * is on a schedule and nothing here can fail the start.
  */
 export const startBackfill = async ({
   client,
@@ -745,6 +923,51 @@ export const startBackfill = async ({
     totalAtStart,
   });
 
+  // After the run is recorded, never before. A configured name that does not
+  // exist is a reason to tell somebody, not a reason to refuse to start: the
+  // backfill still fills in blanks, still respects suppression, and still leaves
+  // the workspace better off than the unscored state it was in. Refusing would
+  // trade a quiet defect for a loud one.
+  const mapping = await runFieldMappingCheck(client);
+  const mappingNotice = describeFieldMappingFindings(
+    mapping.result.missing,
+    LEAD_OBJECT_LABEL,
+  );
+
+  if (mapping.result.missing.length > 0) {
+    const detail = {
+      ...fieldMappingAuditDetail(
+        mapping.result,
+        readLeadObjectNameSingular(mapping.configRecord),
+      ),
+      runId: state.runId,
+      mode,
+      requestedBy,
+      engineVersion: SCORING_ENGINE_VERSION,
+    };
+
+    logGreenlight('backfill_field_mapping_missing', detail);
+
+    await writeBackfillAuditRow(
+      client,
+      now,
+      fieldMappingAuditName(mapping.result.missing, LEAD_OBJECT_LABEL),
+      detail,
+      'ERROR',
+    );
+  } else if (mapping.result.inconclusive > 0 || mapping.result.unchecked > 0) {
+    // Nothing an admin can act on, so nothing an admin is shown. Logged because
+    // "the check ran and could not answer" and "the check ran and found nothing
+    // wrong" are different states, and support should not have to guess which
+    // one a quiet run was in.
+    logGreenlight('backfill_field_mapping_unverified', {
+      runId: state.runId,
+      probed: mapping.result.probed,
+      inconclusive: mapping.result.inconclusive,
+      unchecked: mapping.result.unchecked,
+    });
+  }
+
   await writeBackfillAuditRow(
     client,
     now,
@@ -757,15 +980,22 @@ export const startBackfill = async ({
       totalAtStart,
       chunkSize: BACKFILL_CHUNK_SIZE,
       engineVersion: SCORING_ENGINE_VERSION,
+      fieldMappingChecked: mapping.result.probed,
+      fieldMappingMissing: mapping.result.missing.length,
     },
   );
+
+  const started =
+    totalAtStart === null
+      ? 'Backfill started. It runs about one batch a minute in the background; you can close this panel.'
+      : `Backfill started over ${totalAtStart} records. It runs ${BACKFILL_CHUNK_SIZE} a minute in the background; you can close this panel.`;
 
   return control(
     200,
     'started',
-    totalAtStart === null
-      ? 'Backfill started. It runs about one batch a minute in the background; you can close this panel.'
-      : `Backfill started over ${totalAtStart} records. It runs ${BACKFILL_CHUNK_SIZE} a minute in the background; you can close this panel.`,
+    // The notice leads. The confirmation ends with "you can close this panel",
+    // and a warning placed after that sentence is a warning nobody reads.
+    mappingNotice === null ? started : `${mappingNotice} ${started}`,
     describeBackfill(state, now),
     await countMatching(client, 'unscored'),
   );
