@@ -755,10 +755,10 @@ test('demo: the pipeline board', async ({ page }) => {
          <div style="color:#8b98a5;">What was on screen</div>
          <div style="color:#5fd39b;">${moved?.overrideReason ?? '—'}</div>
        </div>
-       <div style="margin-top:26px;font-size:15px;color:#d9a441;line-height:1.5;">
-         A limit, on the record: Greenlight writes the actor as the
-         workspace-member id the CRM handed it. It does not resolve that to a
-         person’s name, and this demo has not done so either.
+       <div style="margin-top:26px;font-size:15px;color:#5fd39b;line-height:1.5;">
+         The actor is the person, resolved from the request’s own identity — and
+         the member id is kept beside the name, because two colleagues can share
+         a name and one of them can leave.
        </div>
        <div style="margin-top:14px;font-size:14px;color:#6f7d8b;font-style:italic;">
          Read back off the audit row. The record page clips the reason to about
