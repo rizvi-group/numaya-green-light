@@ -442,6 +442,84 @@ export const analyseDimension = (
 };
 
 /* -------------------------------------------------------------------------- */
+/* Values the workspace holds that the profile does not list                   */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The gap between what is written on the records and what the profile accepts.
+ *
+ * This exists because of the single most confusing outcome this product can
+ * produce: enrichment fills `industry` in, the rep watches the score refuse to
+ * move, and nothing anywhere says why. The lead is not at fault and no amount of
+ * work on the lead will fix it — `icp.industry` is exact set membership, the
+ * value is simply not on the list. The remedy is a configuration change, so it
+ * belongs on the page that owns the configuration rather than on every card that
+ * happens to be affected.
+ *
+ * Deliberately **not** a matching change. Loosening `matchesList` to token
+ * overlap would re-score every existing lead in every workspace silently, and
+ * would match "security guard services" against a profile meaning information
+ * security. Naming the mismatch costs nobody a point and leaves the decision
+ * with the person who knows which markets they sell to.
+ */
+export interface UnmatchedValues {
+  /** Clusters carrying no variant the profile accepts, most common first. */
+  readonly clusters: readonly IcpValueCluster[];
+  /** Companies carrying at least one unmatched value. */
+  readonly companies: number;
+  /** `companies` as a share of those with any value for this dimension. */
+  readonly share: number;
+}
+
+const EMPTY_UNMATCHED: UnmatchedValues = {
+  clusters: [],
+  companies: 0,
+  share: 0,
+};
+
+/**
+ * Clusters whose values the configured profile would reject.
+ *
+ * An empty target list returns nothing rather than everything: the rule reports
+ * `not_applicable` in that state and accepts every industry, so there is no
+ * mismatch to report and claiming several hundred would be false.
+ *
+ * A cluster counts as matched when **any** of its raw variants matches, because
+ * that is what the engine does — `matchesList` is given every value on the
+ * record and passes on the first hit.
+ */
+export const findUnmatchedValues = (
+  analysis: DimensionAnalysis,
+  targets: readonly string[],
+): UnmatchedValues => {
+  const accepted = new Set(targets.map((target) => normalise(target)));
+
+  if (accepted.size === 0) {
+    return EMPTY_UNMATCHED;
+  }
+
+  const clusters = analysis.clusters.filter(
+    (cluster) => !cluster.values.some((value) => accepted.has(normalise(value))),
+  );
+
+  if (clusters.length === 0) {
+    return EMPTY_UNMATCHED;
+  }
+
+  // Counts are per cluster and a company can only carry one value per cluster,
+  // but it can carry values in two different clusters. Summing therefore
+  // over-counts companies; it is the right number for "records affected" and is
+  // named as such rather than being passed off as a distinct-company count.
+  const companies = clusters.reduce((sum, cluster) => sum + cluster.count, 0);
+
+  return {
+    clusters,
+    companies,
+    share: analysis.known === 0 ? 0 : companies / analysis.known,
+  };
+};
+
+/* -------------------------------------------------------------------------- */
 /* Size distribution                                                           */
 /* -------------------------------------------------------------------------- */
 

@@ -5,6 +5,7 @@ import {
   analyseDimension,
   analyseSizes,
   clusterKey,
+  findUnmatchedValues,
   toCompanyFacts,
   type CompanyFacts,
   type CompanyFieldPaths,
@@ -281,5 +282,78 @@ describe('analyseCompanies', () => {
     expect(analysis.industry.clusters[0]?.label).toBe('Retail');
     expect(analysis.region.clusters[0]?.label).toBe('France');
     expect(analysis.size.known).toBe(1);
+  });
+});
+
+describe('findUnmatchedValues', () => {
+  const industriesOf = (...values: string[][]) =>
+    analyseDimension(
+      values.map((one, index) => facts(one, [], null, `Co${index}`)),
+      (one) => one.industries,
+      { merge: true },
+    );
+
+  it('reports nothing when no target industries are set', () => {
+    // The rule is not_applicable in this state and accepts everything, so
+    // claiming every industry is "unmatched" would be a lie the page then shows.
+    const analysis = industriesOf(['Software'], ['Mining'], ['Haulage']);
+
+    expect(findUnmatchedValues(analysis, [])).toEqual({
+      clusters: [],
+      companies: 0,
+      share: 0,
+    });
+  });
+
+  it('reports nothing when every observed value is on the list', () => {
+    const analysis = industriesOf(['Software'], ['Retail']);
+
+    expect(findUnmatchedValues(analysis, ['software', 'retail']).clusters).toEqual(
+      [],
+    );
+  });
+
+  it('names the values the profile would reject, most common first', () => {
+    const analysis = industriesOf(
+      ['Software'],
+      ['Computer and Network Security'],
+      ['Computer and Network Security'],
+      ['Haulage'],
+    );
+
+    const unmatched = findUnmatchedValues(analysis, ['software']);
+
+    expect(unmatched.clusters.map((one) => one.label)).toEqual([
+      'Computer and Network Security',
+      'Haulage',
+    ]);
+    expect(unmatched.companies).toBe(3);
+    expect(unmatched.share).toBeCloseTo(3 / 4);
+  });
+
+  it('matches on the raw variants, not the cluster label', () => {
+    // The engine is handed every value on the record and passes on the first
+    // hit, so a cluster is matched when ANY spelling in it is listed - even
+    // when the label shown to the human is a different spelling.
+    const analysis = industriesOf(['SaaS'], ['SaaS'], ['saas ']);
+
+    expect(analysis.clusters[0]?.label).toBe('SaaS');
+    expect(findUnmatchedValues(analysis, ['saas']).clusters).toEqual([]);
+  });
+
+  it('ignores case and surrounding whitespace, exactly as the engine does', () => {
+    const analysis = industriesOf(['Retail']);
+
+    expect(findUnmatchedValues(analysis, ['  RETAIL  ']).clusters).toEqual([]);
+  });
+
+  it('does not divide by zero when nothing has a value', () => {
+    const analysis = industriesOf([], []);
+
+    expect(findUnmatchedValues(analysis, ['software'])).toEqual({
+      clusters: [],
+      companies: 0,
+      share: 0,
+    });
   });
 });

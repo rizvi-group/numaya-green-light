@@ -319,6 +319,58 @@ describe('proposeIcpForWorkspace', () => {
     expect(client.mutationNames()).toEqual([]);
   });
 
+  it('names the industries the workspace holds that the profile rejects', async () => {
+    // The worst outcome this product can produce: enrichment fills the industry
+    // in, the score does not move, and nothing says why. The profile accepts
+    // Manufacturing; four companies are Retail and score as a miss forever.
+    const client = makeWorkspace({
+      companyFields: ['industry', 'employees'],
+      companies,
+      configRecords: [{ ...CONFIG_RECORD, icpIndustries: ['Manufacturing'] }],
+    });
+
+    const outcome = await proposeIcpForWorkspace({ client, now: NOW });
+
+    expect(outcome.body.unmatched?.industry.clusters.map((one) => one.label)).toEqual(
+      ['Retail'],
+    );
+    expect(outcome.body.unmatched?.industry.companies).toBe(4);
+    expect(outcome.body.notes.join(' ')).toContain(
+      'your profile does not accept: Retail (4)',
+    );
+    // Naming a mismatch must never move a score or write anything.
+    expect(client.mutationNames()).toEqual([]);
+  });
+
+  it('reports no mismatch when the profile already lists every industry seen', async () => {
+    const client = makeWorkspace({
+      companyFields: ['industry', 'employees'],
+      companies,
+      configRecords: [
+        { ...CONFIG_RECORD, icpIndustries: ['Manufacturing', 'Retail'] },
+      ],
+    });
+
+    const outcome = await proposeIcpForWorkspace({ client, now: NOW });
+
+    expect(outcome.body.unmatched?.industry.clusters).toEqual([]);
+    expect(outcome.body.notes.join(' ')).not.toContain('does not accept');
+  });
+
+  it('claims no mismatch at all while the profile is still empty', async () => {
+    // An unset profile accepts every industry, so reporting 2 "unmatched" here
+    // would contradict the rule and the panel directly above it.
+    const client = makeWorkspace({
+      companyFields: ['industry', 'employees'],
+      companies,
+    });
+
+    const outcome = await proposeIcpForWorkspace({ client, now: NOW });
+
+    expect(outcome.body.unmatched?.industry.clusters).toEqual([]);
+    expect(outcome.body.notes.join(' ')).not.toContain('does not accept');
+  });
+
   it('proposes nothing when the schema has no industry field, and says why', async () => {
     const outcome = await proposeIcpForWorkspace({
       client: makeWorkspace({

@@ -46,9 +46,11 @@ import {
   COMPANY_REGION_FIELD_CANDIDATES,
   COMPANY_SIZE_FIELD_CANDIDATES,
   analyseCompanies,
+  findUnmatchedValues,
   toCompanyFacts,
   type CompanyFacts,
   type CompanyFieldPaths,
+  type UnmatchedValues,
 } from 'src/icp/icp-analysis';
 import { previewIcpImpact, type IcpImpact } from 'src/icp/icp-impact';
 import {
@@ -76,8 +78,11 @@ import {
   readConnectionNodes,
   type GreenlightApiClient,
 } from 'src/logic-functions/greenlight-api';
-import { greenlightConfigSelection } from 'src/logic-functions/greenlight-config-record';
-import { SCORING_ENGINE_VERSION } from 'src/scoring';
+import {
+  greenlightConfigSelection,
+  toScoringConfigInput,
+} from 'src/logic-functions/greenlight-config-record';
+import { SCORING_ENGINE_VERSION, resolveConfig } from 'src/scoring';
 
 /* -------------------------------------------------------------------------- */
 /* Sample sizes                                                                */
@@ -115,6 +120,16 @@ export interface IcpControlBody {
   readonly impact: IcpImpact | null;
   /** What a preview or apply was actually computed against. */
   readonly selection: IcpSelection | null;
+  /**
+   * Values the workspace's own records carry that the configured profile
+   * rejects. Present on `propose`, which is the only action that reads
+   * Companies. Null everywhere else rather than an empty shape, so "not looked"
+   * and "looked and found none" stay distinguishable.
+   */
+  readonly unmatched: {
+    readonly industry: UnmatchedValues;
+    readonly region: UnmatchedValues;
+  } | null;
   /** Entries the parser had to drop, in the admin's words. */
   readonly warnings: readonly string[];
   /** What the data could not tell us, and why. Never silent. */
@@ -137,6 +152,7 @@ const result = (
     proposal: null,
     impact: null,
     selection: null,
+    unmatched: null,
     warnings: [],
     notes: [],
     rescore: null,
@@ -647,11 +663,52 @@ export const proposeIcpForWorkspace = async ({
     toCompanyFacts(node, probe.paths),
   );
 
-  const proposal = proposeIcp(
-    analyseCompanies({ companies, totalCompanies, paths: probe.paths }),
-  );
+  const analysis = analyseCompanies({
+    companies,
+    totalCompanies,
+    paths: probe.paths,
+  });
+  const proposal = proposeIcp(analysis);
 
   const notes = [...probe.notes, ...sample.notes];
+
+  /*
+   * Values the workspace already holds that the profile rejects.
+   *
+   * This is the answer to the worst outcome enrichment can produce: the
+   * industry field fills in, the score does not move, and nothing says why.
+   * `icp.industry` is exact set membership, so the lead is not at fault and no
+   * work on the lead will ever fix it - the list is simply missing a value.
+   * Saying so here, on the page that owns the list, is the whole fix. Nothing
+   * about matching or scoring changes.
+   *
+   * Read from the resolved config rather than from `status`, which reports
+   * whether a dimension is configured but not what it was configured with.
+   */
+  const configured = resolveConfig(toScoringConfigInput(record)).config.icp;
+  const unmatched = {
+    industry: findUnmatchedValues(analysis.industry, configured.industries),
+    region: findUnmatchedValues(analysis.region, configured.regions),
+  };
+
+  for (const [dimension, found] of [
+    ['industries', unmatched.industry],
+    ['regions', unmatched.region],
+  ] as const) {
+    if (found.clusters.length === 0) {
+      continue;
+    }
+
+    const named = found.clusters
+      .slice(0, 4)
+      .map((one) => `${one.label} (${one.count.toLocaleString('en-US')})`)
+      .join(', ');
+    const rest = found.clusters.length - Math.min(4, found.clusters.length);
+
+    notes.push(
+      `Your companies carry ${found.clusters.length.toLocaleString('en-US')} ${dimension} your profile does not accept: ${named}${rest > 0 ? `, and ${rest.toLocaleString('en-US')} more` : ''}. Matching is exact, so these score as a miss until they are on the list — tick the ones you sell to below.`,
+    );
+  }
 
   if (
     totalCompanies !== null &&
@@ -677,6 +734,7 @@ export const proposeIcpForWorkspace = async ({
     proposal,
     impact: impact.impact,
     selection: proposal.selection,
+    unmatched,
     notes: [...notes, ...impact.notes],
   });
 };

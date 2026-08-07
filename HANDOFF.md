@@ -250,9 +250,31 @@ The mechanism meant to absorb this is `expandIndustriesWithSynonyms`, which only
 has a calibration pack. Without one, a customer sees enrichment filling the industry field while the score
 refuses to move, which is the most confusing outcome this feature can produce.
 
-**This needs a human decision.** The three options — loosen the rule to token overlap, ship a default
-synonym set, or constrain the model to the workspace's own vocabulary — all change scoring behaviour for
-every existing customer, so none of them was taken here.
+**Decided 2026-08-07 — and none of the three options was taken.** Loosening to token overlap, shipping a
+default synonym set, and constraining the model to the workspace's vocabulary all share one flaw: they
+change what an existing customer's leads score, silently, on upgrade. Token overlap is the worst of them
+— it would match "security guard services" against a profile meaning information security, and it would
+re-score every lead in every workspace with no one having asked for it.
+
+What shipped instead: **name the mismatch, change nothing about matching.** `findUnmatchedValues`
+(`src/icp/icp-analysis.ts`) compares the values the workspace's own Companies carry against the
+configured list, and `propose` returns them plus a note that reads:
+
+> Your companies carry 3 industries your profile does not accept: Computer and Network Security (2),
+> Haulage (1). Matching is exact, so these score as a miss until they are on the list — tick the ones you
+> sell to below.
+
+The clusters it names are the same rows the propose panel already renders with tick boxes, so adding them
+*is* the existing apply flow — no new write path, no new permission, and the customer decides which of
+their own markets count. Nobody's score moves until they choose to move it.
+
+This is the same principle the pipeline card follows: show the arithmetic and name the failing criterion
+rather than quietly changing the arithmetic so it passes. A matcher that guesses is a matcher that is
+occasionally, invisibly wrong about which markets a customer sells to.
+
+Covered by nine tests — six on the pure comparison (empty list reports nothing rather than everything;
+matching is on raw variants, not the cluster label) and three on the propose wiring, including one
+asserting a mismatch never writes anything.
 
 ### Model quality: the pipeline copes, the model is the variable
 
