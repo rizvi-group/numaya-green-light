@@ -79,10 +79,33 @@ let subject: ScoredPerson;
  * Deliberately derived from the *scored control lead* rather than from a
  * configuration read: it answers "did calibration reach the scoring engine",
  * which is the precondition the assertions actually depend on, rather than "is a
- * key present", which could be true while delivery is broken. A regression that
- * stops calibration reaching the engine still fails the suite rather than
- * silently skipping it — because a workspace that has a licence will report
- * calibration here, and only an unlicensed one skips.
+ * key present", which could be true while delivery is broken.
+ *
+ * ## The guard could not fire, and CI proved it
+ *
+ * It read `traceCalibration(...) !== null`, which is true on *every* workspace —
+ * the assertion sixty lines below this insists on exactly that, because "we did
+ * not record it" and "we used the defaults" must not look the same months later.
+ * So the skip never triggered and the suite failed on every unlicensed container
+ * from 2026-08-05 until now, which is the state this guard was written to
+ * handle. A precondition that cannot be false is not a precondition.
+ *
+ * It now reads the stamp's `source`, which is `licensed` only when a licence
+ * actually delivered a vocabulary.
+ *
+ * The cost, stated plainly because it is a real weakening and there is no
+ * compensating control in this file: every test here sits inside the one
+ * describe this flag gates, the `LICENCE ·` audit assertion included. So a
+ * *licensed* workspace whose delivery silently broke would now skip rather than
+ * fail. Nothing else would notice.
+ *
+ * That is not fixable from the trace: `shipped_defaults` looks identical whether
+ * the workspace has no licence or has one that stopped delivering. The way to
+ * close it is to give CI a sandbox `LICENCE_KEY`, at which point the skip never
+ * applies and a delivery regression fails loudly again. Until then this suite
+ * proves calibration works where a licence exists and is silent where one does
+ * not — which is strictly better than failing everywhere, and worse than
+ * running it licensed.
  */
 let calibrationDelivered = false;
 
@@ -93,7 +116,8 @@ test.beforeAll(async () => {
   control = await waitForDecision(controlId);
   subject = await waitForDecision(subjectId);
 
-  calibrationDelivered = traceCalibration(control.greenlightTrace) !== null;
+  calibrationDelivered =
+    traceCalibration(control.greenlightTrace)?.source === 'licensed';
 });
 
 test.afterAll(async () => {

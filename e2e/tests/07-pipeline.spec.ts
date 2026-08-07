@@ -708,7 +708,12 @@ test('the capture drawer creates the lead, opens the company and places the card
 
   expect(scored.greenlightDecision).not.toBeNull();
 
-  await page.getByRole('button', { name: 'Close' }).click();
+  // Escape rather than a Close button. Greenlight's drawer renders no Close of
+  // its own — every button with that name belongs to Twenty's chrome, and CI
+  // paints two of them, which made this a strict-mode violation there while
+  // passing locally on a container that happened to show one. Escape is what a
+  // user presses and is not a bet on how many Closes the platform is drawing.
+  await page.keyboard.press('Escape');
   await expectNoFailures(page);
 });
 
@@ -780,7 +785,12 @@ test('capturing against a company that already exists links it and changes nothi
       'not be able to overwrite an account record by getting the name right.',
   ).toEqual(existingCompanyBefore);
 
-  await page.getByRole('button', { name: 'Close' }).click();
+  // Escape rather than a Close button. Greenlight's drawer renders no Close of
+  // its own — every button with that name belongs to Twenty's chrome, and CI
+  // paints two of them, which made this a strict-mode violation there while
+  // passing locally on a container that happened to show one. Escape is what a
+  // user presses and is not a bet on how many Closes the platform is drawing.
+  await page.keyboard.press('Escape');
   await expectNoFailures(page);
 });
 
