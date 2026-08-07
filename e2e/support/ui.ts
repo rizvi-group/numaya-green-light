@@ -189,6 +189,15 @@ export const PIPELINE_BENIGN_PROSE: readonly RegExp[] = [
   /could not check/i,
   // The move panel's own wording for the same thing.
   /are not counted either way/i,
+  // Why an ENRICH_THE_RECORD action is being offered — `next-action.ts`:
+  // "A field the score needed, could not read, and a provider could plausibly
+  // find." The `could not read` is describing the *score's* gap, which is the
+  // reason the card is offering to fill it, and is as much the intended output
+  // as the sentence above it. It surfaces on any workspace with enrichable gaps
+  // and no enrichment run yet — which is every workspace on its first day, and
+  // is why a suite that only ever ran against an already-enriched container had
+  // not seen it.
+  /a provider could plausibly find/i,
 ];
 
 /* -------------------------------------------------------------------------- */
