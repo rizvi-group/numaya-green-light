@@ -38,9 +38,10 @@
     "lint": "oxlint -c .oxlintrc.json .",
     "lint:fix": "oxlint --fix -c .oxlintrc.json .",
     "typecheck": "tsgo --noEmit -p tsconfig.spec.json",
-    "test": "vitest run",
-    "test:watch": "vitest",
+    "test": "vitest run --config vitest.unit.config.ts",
+    "test:watch": "vitest --config vitest.unit.config.ts",
     "test:unit": "vitest run --config vitest.unit.config.ts",
+    "test:integration": "vitest run --config vitest.config.ts",
     "test:live": "vitest run --config vitest.live.config.ts"
   },
   "devDependencies": {

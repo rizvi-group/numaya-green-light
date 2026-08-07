@@ -89,18 +89,30 @@ If a design decision would introduce a cluster dependency, it is wrong. Re-read
 
 ### Not done
 
-- **No licensing client and no enrichment.** Both are v0.2 by the roadmap. The licensing contract is
-  verified and ready to implement (`LICENSING_INTEGRATION.md`); enrichment still depends on the
-  event-handler timeout question.
-- **`package.json` licence is `UNLICENSED`.** The scaffold defaulted to MIT, which contradicts the
-  source-available/anti-free-riding design. Placeholder — replace once legal picks between PolyForm Small
-  Business / BSL 1.1 / Elastic 2.0.
+> Re-checked against the working tree on 2026-08-07. Four items previously listed here had in fact
+> shipped, and a stale handoff is worse than no handoff — it is the one document a new developer is
+> told to read first. What changed, so the correction is auditable rather than silent:
+>
+> | Was listed as not done | Actual state |
+> |---|---|
+> | No licensing client, no enrichment | Both shipped. `app/src/licensing/`, `app/src/enrichment/` |
+> | `package.json` licence is `UNLICENSED` | It is `Elastic-2.0`, at version `0.2.0` |
+> | Main page does not render | The main page was **deleted on purpose**, not left broken — see "why the main page was deleted rather than rewritten". The sidebar now opens the pipeline board. |
+> | Enrichment blocked on the event-handler timeout question | Answered and shipped; see "Enrichment against real providers" |
+
+Genuinely still open:
+
+- **Not published to npm.** No scope claimed, and nothing can be published while the repository is
+  private (see "CI/CD — 2026-08-04"). Needs a human on npmjs.com — it is not an automatable step.
+- **No marketplace listing.** Follows publication.
+- **Twenty relinks Company from the email domain after capture**, silently creating the duplicate that
+  dedupe exists to prevent. Measured, not inferred. Recorded in `PIPELINE_SPEC.md` § "Two things the CRM
+  does that this spec does not control"; unresolved because overriding platform behaviour there is not
+  obviously ours to do.
+- **The prompt-injection defence is thinner than the design implies** — see the section of that name.
+  The defence held against a live run, but the reason it held is narrower than the five-layer
+  description suggests.
 - No Twenty API key minted for the app (see "Credentials" below — do not skip the caveat).
-- No npm scope claimed, and nothing can be published while the repository is private (see
-  "CI/CD — 2026-08-04" below).
-- The main page (`src/page-layouts/main-page.page-layout.ts` + `src/front-components/main-page.tsx`) does
-  not render. Opening "Numaya Greenlight" in the sidebar shows Twenty's generic
-  "Was installed successfully" scaffold instead. Found by the Playwright pass; not yet diagnosed.
 
 ## Enrichment against real providers — 2026-08-05
 
