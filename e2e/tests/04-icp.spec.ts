@@ -1,5 +1,11 @@
 import { expect, test } from '@playwright/test';
 
+import {
+  createCompany,
+  deleteCompany,
+  readIcpRegions,
+  setIcpRegions,
+} from '../support/twenty-api';
 import { errorBanners, sidebarEntry, waitForShell } from '../support/ui';
 
 /**
@@ -141,5 +147,85 @@ test.describe('the ICP page', () => {
 
     await page.screenshot({ path: 'shots/04-icp-no-evidence.png', fullPage: true });
     expect(await errorBanners(page)).toEqual([]);
+  });
+
+  /*
+   * The one test in this file that writes anything.
+   *
+   * The rest are read-only on purpose — they must not change what the other
+   * suites score against. This one has to configure a profile and create
+   * companies, because the state it covers exists only when a profile is set
+   * *and* the workspace holds values that profile rejects. Everything it
+   * touches is undone in a `finally`, which is safe only because the suite runs
+   * `workers: 1`; under any parallelism it would leak into whatever else was
+   * scoring at the time.
+   *
+   * Region rather than industry: the seeded workspace's Company has no industry
+   * column at all — the test above asserts exactly that — so the industry
+   * dimension cannot be exercised here without adding a custom field to a
+   * shared fixture. `address.addressCountry` ships with Twenty and is empty on
+   * every seeded company, so three companies carrying one country is a
+   * dimension this test fully controls.
+   *
+   * What it guards is the most confusing outcome the product can produce:
+   * enrichment writes a value, the score refuses to move, and nothing says why.
+   * The lead is not at fault and no work on the lead fixes it — matching is
+   * exact set membership and the value is simply not on the list.
+   */
+  test('names the values the workspace holds that the profile rejects', async ({
+    page,
+  }) => {
+    const before = await readIcpRegions();
+    const created: string[] = [];
+
+    try {
+      for (const name of ['Reykjavik Fisheries', 'Akureyri Freight', 'Selfoss Steel']) {
+        created.push(await createCompany(name, { addressCountry: 'Iceland' }));
+      }
+
+      // A region none of them is in, so Iceland is rejected and the panel has
+      // exactly one thing to report.
+      await setIcpRegions(['Antarctica']);
+
+      await page.goto('/');
+      await waitForShell(page);
+      await sidebarEntry(page, 'Greenlight ICP').click();
+      await expect(page.getByText('Ideal customer profile')).toBeVisible({
+        timeout: 60_000,
+      });
+
+      await page.getByText('Suggest a profile from my data').click();
+      await expect(page.getByText('Where this comes from')).toBeVisible({
+        timeout: 90_000,
+      });
+
+      await expect(
+        page.getByText(/\d+ regions? on your records that this profile rejects/),
+        'a configured profile that rejects what the workspace holds must say so',
+      ).toBeVisible();
+
+      // The consequence, not just the count — this is the sentence that stops an
+      // admin blaming enrichment for a score that will not move.
+      await expect(
+        page.getByText(/Matching is exact, so these score as a miss/),
+      ).toBeVisible();
+
+      // And the value itself, offered as something to accept in one click.
+      await expect(
+        page.getByRole('button', { name: /^\+ Iceland \(\d+\)$/ }),
+        'each rejected value is a button that adds it to the profile',
+      ).toBeVisible();
+
+      await page.screenshot({
+        path: 'shots/04-icp-unmatched.png',
+        fullPage: true,
+      });
+      expect(await errorBanners(page)).toEqual([]);
+    } finally {
+      await setIcpRegions(before);
+      for (const id of created) {
+        await deleteCompany(id);
+      }
+    }
   });
 });

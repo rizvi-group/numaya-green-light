@@ -181,7 +181,7 @@ export const deletePerson = async (id: string): Promise<void> => {
  */
 export const createCompany = async (
   name: string,
-  options: { domainName?: string } = {},
+  options: { domainName?: string; addressCountry?: string } = {},
 ): Promise<string> => {
   const result = await call<{ createCompany: { id: string } }>(
     'graphql',
@@ -194,6 +194,9 @@ export const createCompany = async (
         ...(options.domainName === undefined
           ? {}
           : { domainName: { primaryLinkUrl: options.domainName } }),
+        ...(options.addressCountry === undefined
+          ? {}
+          : { address: { addressCountry: options.addressCountry } }),
       },
     },
   );
@@ -433,6 +436,70 @@ export const viewIdByName = async (name: string): Promise<string> => {
   }
 
   return match.node.id;
+};
+
+/* -------------------------------------------------------------------------- */
+/* The workspace's own ICP configuration                                       */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The single `GreenlightConfig` record's id.
+ *
+ * Throws rather than returning null when there is none. A workspace without it
+ * has not finished installing, and every assertion a caller was about to make
+ * would fail for that reason instead of the one it is testing — which is
+ * exactly how a whole suite came to fail confusingly once already.
+ */
+export const configRecordId = async (): Promise<string> => {
+  const result = await call<{
+    greenlightConfigs: { edges: { node: { id: string } }[] };
+  }>('graphql', `query { greenlightConfigs(first: 2) { edges { node { id } } } }`);
+
+  const id = result.greenlightConfigs.edges[0]?.node.id;
+
+  if (id === undefined) {
+    throw new Error(
+      'This workspace has no GreenlightConfig record. The post-install hook has ' +
+        'not run — `yarn twenty dev:function:exec --postInstall` seeds it.',
+    );
+  }
+
+  return id;
+};
+
+export const readIcpRegions = async (): Promise<string[]> => {
+  const result = await call<{
+    greenlightConfigs: { edges: { node: { icpRegions: string[] | null } }[] };
+  }>(
+    'graphql',
+    `query { greenlightConfigs(first: 1) { edges { node { icpRegions } } } }`,
+  );
+
+  return result.greenlightConfigs.edges[0]?.node.icpRegions ?? [];
+};
+
+/**
+ * Set the profile's regions.
+ *
+ * Writes workspace configuration, so every caller must restore what it found in
+ * a `finally`. The suite runs `workers: 1`, which is what makes set-and-restore
+ * safe here at all — under any parallelism this would leak into whatever else
+ * was scoring at the time.
+ *
+ * Region rather than industry because the seeded workspace's `Company` has no
+ * industry column at all, so the industry dimension cannot be exercised against
+ * it without adding a custom field to a shared fixture. `address.addressCountry`
+ * ships with Twenty and is empty on every seeded company, which makes it the one
+ * dimension a test can populate and reason about exactly.
+ */
+export const setIcpRegions = async (values: readonly string[]): Promise<void> => {
+  await call(
+    'graphql',
+    `mutation($id: UUID!, $values: [String!]) {
+       updateGreenlightConfig(id: $id, data: { icpRegions: $values }) { id }
+     }`,
+    { id: await configRecordId(), values },
+  );
 };
 
 /* -------------------------------------------------------------------------- */
