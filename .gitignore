@@ -65,3 +65,6 @@ ops/calibration/*.json
 # Local archive of the pre-rebuild commit history. Contains internal hostnames
 # and paths from before the docs were sanitised - never publish this.
 COMMIT_HISTORY_ARCHIVE.md
+
+# Agent tooling working directories
+.serena/
