@@ -1,0 +1,36 @@
+# Defence in depth for a mistake, not the publish path.
+#
+# Greenlight is published with `yarn twenty app:publish`, which builds the app
+# and publishes `.twenty/output` — a generated directory holding manifest.json,
+# the transpiled sources, README and public assets, and nothing else. This file
+# does not apply to that directory and cannot affect a correct publish.
+#
+# It exists because a bare `npm publish` run in `app/` is a plausible mistake
+# and a bad one: with no `files` allowlist npm ships the whole working tree —
+# 289 files, 2.5 MB, every test suite, and `vitest.config.ts`, which carries a
+# hardcoded Twenty API key. That key only opens a locally seeded dev workspace,
+# but a credential-shaped string in a public tarball trips secret scanners and
+# is not a thing to publish on purpose.
+#
+# A `files` allowlist would have been the stronger guard and is deliberately not
+# used: package.json fields ARE copied into `.twenty/output/package.json`, so an
+# allowlist written for this directory's layout would follow the real publish
+# into a directory with a different one. `.npmignore` stays here.
+
+# Tests, in every shape the repo uses
+__tests__/
+__live__/
+*.test.ts
+*.test.tsx
+*.integration-test.ts
+*.live-test.ts
+
+# Test and build configuration
+vitest.config.ts
+vitest.unit.config.ts
+vitest.live.config.ts
+tsconfig.spec.json
+.oxlintrc.json
+
+# Generated build output — published from, never published in
+.twenty/
