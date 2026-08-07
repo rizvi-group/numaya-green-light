@@ -41,7 +41,15 @@
 name: Publish
 
 on:
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      bootstrap:
+        description: >-
+          First publish only. Uses the NPM_TOKEN secret because npm cannot
+          pre-register a trusted publisher for a package that does not exist
+          yet. Leave false once the publisher is registered.
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -101,10 +109,35 @@ jobs:
         working-directory: app
         run: yarn install --immutable
 
-      - name: Publish to npm
+      # Two steps, one command, differing only in whether a token is in scope.
+      #
+      # They are separate rather than one step with a conditional `env:` because
+      # an empty NODE_AUTH_TOKEN is not the same as an absent one: setup-node has
+      # already written an .npmrc containing
+      # `//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}`, and leaving that
+      # resolved to empty makes npm present a blank credential and get 401 before
+      # it ever tries OIDC. The steady-state step must not see the variable at
+      # all.
+      #
+      # Neither sets TWENTY_APP_PUBLISH_DISABLE_PROVENANCE. Provenance is how
+      # Twenty's marketplace verifies the GitHub org owns the listing; publishing
+      # without it succeeds and leaves the app permanently unclaimable.
+
+      - name: Publish to npm (bootstrap — token)
+        if: inputs.bootstrap
         working-directory: app
-        # Publishing from a private source repo would need
-        #   env:
-        #     TWENTY_APP_PUBLISH_DISABLE_PROVENANCE: 'true'
-        # which forfeits the marketplace ownership claim. Read the header first.
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -z "$NODE_AUTH_TOKEN" ]; then
+            echo "::error::bootstrap was requested but the NPM_TOKEN secret is empty or unset."
+            echo "::error::Create a granular token scoped to @numaya (read and write), then:"
+            echo "::error::  gh secret set NPM_TOKEN --repo ${{ github.repository }}"
+            exit 1
+          fi
+          yarn twenty app:publish
+
+      - name: Publish to npm (trusted publishing — no credential)
+        if: ${{ !inputs.bootstrap }}
+        working-directory: app
         run: yarn twenty app:publish
