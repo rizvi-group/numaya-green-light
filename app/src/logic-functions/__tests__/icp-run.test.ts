@@ -335,9 +335,7 @@ describe('proposeIcpForWorkspace', () => {
       ['Retail'],
     );
     expect(outcome.body.unmatched?.industry.companies).toBe(4);
-    expect(outcome.body.notes.join(' ')).toContain(
-      'your profile does not accept: Retail (4)',
-    );
+    expect(outcome.body.unmatched?.industry.share).toBeCloseTo(4 / 44);
     // Naming a mismatch must never move a score or write anything.
     expect(client.mutationNames()).toEqual([]);
   });
@@ -354,7 +352,6 @@ describe('proposeIcpForWorkspace', () => {
     const outcome = await proposeIcpForWorkspace({ client, now: NOW });
 
     expect(outcome.body.unmatched?.industry.clusters).toEqual([]);
-    expect(outcome.body.notes.join(' ')).not.toContain('does not accept');
   });
 
   it('claims no mismatch at all while the profile is still empty', async () => {
@@ -368,7 +365,6 @@ describe('proposeIcpForWorkspace', () => {
     const outcome = await proposeIcpForWorkspace({ client, now: NOW });
 
     expect(outcome.body.unmatched?.industry.clusters).toEqual([]);
-    expect(outcome.body.notes.join(' ')).not.toContain('does not accept');
   });
 
   it('proposes nothing when the schema has no industry field, and says why', async () => {

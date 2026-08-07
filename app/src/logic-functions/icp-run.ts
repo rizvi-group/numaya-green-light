@@ -691,25 +691,6 @@ export const proposeIcpForWorkspace = async ({
     region: findUnmatchedValues(analysis.region, configured.regions),
   };
 
-  for (const [dimension, found] of [
-    ['industries', unmatched.industry],
-    ['regions', unmatched.region],
-  ] as const) {
-    if (found.clusters.length === 0) {
-      continue;
-    }
-
-    const named = found.clusters
-      .slice(0, 4)
-      .map((one) => `${one.label} (${one.count.toLocaleString('en-US')})`)
-      .join(', ');
-    const rest = found.clusters.length - Math.min(4, found.clusters.length);
-
-    notes.push(
-      `Your companies carry ${found.clusters.length.toLocaleString('en-US')} ${dimension} your profile does not accept: ${named}${rest > 0 ? `, and ${rest.toLocaleString('en-US')} more` : ''}. Matching is exact, so these score as a miss until they are on the list — tick the ones you sell to below.`,
-    );
-  }
-
   if (
     totalCompanies !== null &&
     totalCompanies > companies.length &&

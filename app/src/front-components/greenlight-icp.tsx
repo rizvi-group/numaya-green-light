@@ -7,6 +7,7 @@ import {
   ICP_CLIENT_PATH,
   ICP_FRONT_COMPONENT_UNIVERSAL_IDENTIFIER,
 } from 'src/constants/icp-identifiers';
+import type { UnmatchedValues } from 'src/icp/icp-analysis';
 import type { IcpImpact } from 'src/icp/icp-impact';
 import type {
   IcpProposal,
@@ -101,6 +102,10 @@ interface IcpResponse {
   readonly selection?: IcpSelection | null;
   readonly warnings?: readonly string[];
   readonly notes?: readonly string[];
+  readonly unmatched?: {
+    readonly industry: UnmatchedValues;
+    readonly region: UnmatchedValues;
+  } | null;
   readonly rescore?: { started: boolean; message: string } | null;
 }
 
@@ -505,6 +510,19 @@ const GreenlightIcp = () => {
             </div>
           )}
 
+          <UnmatchedPanel
+            dimension="industries"
+            found={state.unmatched?.industry}
+            picked={industryPicks}
+            onAdd={(label) => toggle(industryPicks, setIndustryPicks, label)}
+          />
+          <UnmatchedPanel
+            dimension="regions"
+            found={state.unmatched?.region}
+            picked={regionPicks}
+            onAdd={(label) => toggle(regionPicks, setRegionPicks, label)}
+          />
+
           {(state.warnings ?? []).length > 0 &&
             (state.warnings ?? []).map((warning) => (
               <span
@@ -760,6 +778,85 @@ const GreenlightIcp = () => {
 /* -------------------------------------------------------------------------- */
 /* Sub-components                                                              */
 /* -------------------------------------------------------------------------- */
+
+/**
+ * Values the workspace's own records carry that the profile rejects.
+ *
+ * This panel exists for one failure a customer would otherwise have to diagnose
+ * from a score that will not move: enrichment writes an industry, the industry
+ * rule keeps failing, and every surface reports it as a property of the lead.
+ * It is not — matching is exact set membership and the value is simply absent
+ * from the list. The lead cannot be fixed; the list can.
+ *
+ * Each row adds to the same pick set the proposal below uses, so accepting one
+ * is the apply flow that already exists rather than a second way to write
+ * configuration. Nothing here changes a score on its own.
+ */
+const UnmatchedPanel = ({
+  dimension,
+  found,
+  picked,
+  onAdd,
+}: {
+  dimension: 'industries' | 'regions';
+  found: UnmatchedValues | undefined;
+  picked: readonly string[];
+  onAdd: (label: string) => void;
+}) => {
+  if (found === undefined || found.clusters.length === 0) {
+    return null;
+  }
+
+  const companies = found.companies.toLocaleString('en-US');
+
+  return (
+    <div style={{ ...CARD_STYLE, gap: '8px', borderColor: WARN }}>
+      <strong style={{ fontSize: '13px', color: WARN }}>
+        {found.clusters.length.toLocaleString('en-US')}{' '}
+        {found.clusters.length === 1
+          ? dimension.replace(/s$/, '')
+          : dimension}{' '}
+        on your records that this profile rejects
+      </strong>
+      <span style={{ color: MUTED, fontSize: '12px', lineHeight: 1.5 }}>
+        {companies} {found.companies === 1 ? 'company carries' : 'companies carry'}{' '}
+        a value that is not on your list. Matching is exact, so these score as a
+        miss — and will keep doing so however well enrichment fills the field in.
+        Add the ones you actually sell to; leave the rest.
+      </span>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+        {found.clusters.slice(0, 12).map((cluster) => {
+          const isPicked = picked.includes(cluster.label);
+
+          return (
+            <button
+              key={cluster.label}
+              type="button"
+              onClick={() => onAdd(cluster.label)}
+              style={{
+                ...button(false, false),
+                padding: '4px 10px',
+                fontSize: '12px',
+                borderColor: isPicked ? undefined : WARN,
+                color: isPicked ? undefined : WARN,
+              }}
+            >
+              {isPicked ? '✓ ' : '+ '}
+              {cluster.label} ({cluster.count.toLocaleString('en-US')})
+            </button>
+          );
+        })}
+      </div>
+      {found.clusters.length > 12 && (
+        <span style={{ color: MUTED, fontSize: '12px' }}>
+          The {(found.clusters.length - 12).toLocaleString('en-US')} rarest are
+          not shown — the full list is in the panel below, under “Show every
+          value”.
+        </span>
+      )}
+    </div>
+  );
+};
 
 const ValueDimension = ({
   dimension,
