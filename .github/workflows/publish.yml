@@ -85,7 +85,17 @@ jobs:
 
       - name: Update npm
         # Trusted publishing requires npm 11.5.1 or later.
-        run: npm install -g npm@latest
+        #
+        # Pinned to the 11.x line, not `@latest`. `@latest` reached npm 12, which
+        # requires node ^22.22.2 || ^24.15.0 || >=26.0.0 and so refuses to install
+        # on the node this app pins in app/.nvmrc (24.5.0) — the publish failed
+        # here on 2026-08-07 having never reached the npm registry. The runner
+        # already ships 11.5.1, so this is a floor, not an upgrade, and it only
+        # acts if a future image regresses below the trusted-publishing minimum.
+        #
+        # Raising app/.nvmrc past 24.15.0 would let `@latest` work again, but the
+        # node version is the app's runtime baseline and is not the CI's to move.
+        run: npm install -g 'npm@^11.5.1'
 
       - name: Install dependencies
         working-directory: app
