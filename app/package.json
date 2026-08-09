@@ -1,6 +1,6 @@
 {
   "name": "@numaya/greenlight",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Lead quality gate for Twenty CRM. Deterministic scoring plus optional AI and search enrichment.",
   "license": "Elastic-2.0",
   "author": "Numaya <support@numaya.ai>",
@@ -17,7 +17,7 @@
     "node": "^24.5.0",
     "npm": "please-use-yarn",
     "yarn": ">=4.0.2",
-    "twenty": ">=2.26.0 <3.0.0"
+    "twenty": ">=2.12.0 <3.0.0"
   },
   "keywords": [
     "twenty",
