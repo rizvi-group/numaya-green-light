@@ -164,7 +164,7 @@ export const describeLicenceForAdmin = (state: LicenceState): LicenceNotice => {
         severity: state.severity,
         headline: `Licence key was accepted but no licence exists in the ${environmentLabel(state.environment)} environment`,
         detail:
-          `This is almost certainly a misconfiguration, not a bad key: the licensing service accepted the key as valid credentials, then found no licence attached to it in the ${environmentLabel(state.environment)} environment. Set LICENCE_ENVIRONMENT to ${otherEnvironmentLabel(state.environment)} in the app settings if this workspace is licensed there, and re-run the licence check. Do not re-enter the key — a wrong or mistyped key is rejected outright and reports "licence was rejected" instead. If the environment is already correct, the licence has been deleted and Numaya support can restore it. Scoring, the gate and the queue are unaffected throughout.`,
+          `This is almost certainly a misconfiguration, not a bad key: the licensing service accepted the key as valid credentials, then found no licence attached to it in the ${environmentLabel(state.environment)} environment. Set LICENCE_ENVIRONMENT to ${otherEnvironmentLabel(state.environment)} in the app settings if this workspace is licensed there, and re-run the licence check. Do not re-enter the key — a wrong or mistyped key is rejected outright and reports "licence was rejected" instead. If the environment is already correct, the licence has been deleted and Numaya AI support can restore it. Scoring, the gate and the queue are unaffected throughout.`,
       };
 
     case 'expired':
@@ -180,7 +180,7 @@ export const describeLicenceForAdmin = (state: LicenceState): LicenceNotice => {
         severity: state.severity,
         headline: 'Greenlight licence is suspended',
         detail:
-          'Enrichment is off. This is usually a billing issue and is reversible — contact Numaya support. Scoring is unaffected.',
+          'Enrichment is off. This is usually a billing issue and is reversible — contact Numaya AI support. Scoring is unaffected.',
       };
 
     case 'revoked':
@@ -188,7 +188,7 @@ export const describeLicenceForAdmin = (state: LicenceState): LicenceNotice => {
         severity: state.severity,
         headline: 'Greenlight licence has been revoked',
         detail:
-          'Enrichment is off and this cannot be reversed on the existing key. Contact Numaya support for a replacement. Scoring is unaffected.',
+          'Enrichment is off and this cannot be reversed on the existing key. Contact Numaya AI support for a replacement. Scoring is unaffected.',
       };
 
     case 'quota_exceeded':
@@ -204,7 +204,7 @@ export const describeLicenceForAdmin = (state: LicenceState): LicenceNotice => {
         severity: state.severity,
         headline: 'This workspace is not activated against the licence',
         detail:
-          'Reinstall the app, or contact Numaya support, to claim an activation slot. Scoring is unaffected.',
+          'Reinstall the app, or contact Numaya AI support, to claim an activation slot. Scoring is unaffected.',
       };
 
     case 'max_activations_reached':
@@ -220,7 +220,7 @@ export const describeLicenceForAdmin = (state: LicenceState): LicenceNotice => {
         severity: state.severity,
         headline: 'Greenlight licence was rejected',
         detail:
-          'The licensing service refused this key outright — it does not recognise it in any environment. Check the key in the app settings for a typo or a truncated paste, then contact Numaya support. Scoring is unaffected.',
+          'The licensing service refused this key outright — it does not recognise it in any environment. Check the key in the app settings for a typo or a truncated paste, then contact Numaya AI support. Scoring is unaffected.',
       };
 
     case 'licence_service_rate_limited':
@@ -236,13 +236,13 @@ export const describeLicenceForAdmin = (state: LicenceState): LicenceNotice => {
         severity: state.severity,
         headline: 'Licence service returned an unreadable response',
         detail:
-          'The licensing service answered, but not in a shape this version understands — usually a proxy or an upgrade in progress. Enrichment is paused; scoring is unaffected. Report it to Numaya support if it persists.',
+          'The licensing service answered, but not in a shape this version understands — usually a proxy or an upgrade in progress. Enrichment is paused; scoring is unaffected. Report it to Numaya AI support if it persists.',
       };
 
     case 'licence_service_unreachable':
       return {
         severity: state.severity,
-        headline: 'Cannot reach the Numaya licensing service',
+        headline: 'Cannot reach the Numaya AI licensing service',
         detail: `Enrichment is paused while the cached entitlement ages out (last successful check ${hoursSince(state.cacheAgeMs)}). Check outbound network access to the licensing service. Scoring is unaffected.`,
       };
 

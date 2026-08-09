@@ -93,7 +93,7 @@ export default defineLogicFunction({
   universalIdentifier: LICENCE_REVALIDATE_LOGIC_FUNCTION_UNIVERSAL_IDENTIFIER,
   name: 'greenlight-licence-revalidate',
   description:
-    'Re-validates the Numaya licence nightly, refreshes the cached entitlement and records the resulting mode in the Greenlight audit log. Never blocks scoring.',
+    'Re-validates the Numaya AI licence nightly, refreshes the cached entitlement and records the resulting mode in the Greenlight audit log. Never blocks scoring.',
   timeoutSeconds: 30,
   handler,
   cronTriggerSettings: {

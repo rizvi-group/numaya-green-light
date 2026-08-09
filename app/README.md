@@ -37,14 +37,14 @@ It works out of the box. These are all optional:
 
 | Variable | Default | What it does |
 |---|---|---|
-| `LICENCE_KEY` | — | Your Numaya licence. Without one, Greenlight runs in rules-only mode. |
+| `LICENCE_KEY` | — | Your Numaya AI licence. Without one, Greenlight runs in rules-only mode. |
 | `USE_TWENTY_AI` | `true` | Use your workspace's own AI for enrichment. |
 | `LLM_BASE_URL` / `LLM_API_KEY` / `LLM_MODEL` | — | An OpenAI-compatible endpoint, used only if Twenty AI is unavailable. |
 | `SEARCH_PROVIDER` | `none` | `searxng`, `brave`, `serper`, or `none`. Enrichment needs a real search provider. |
 | `SEARCH_BASE_URL` | — | Your SearXNG instance, e.g. `http://searxng:8080`. SearXNG only. It must allow the JSON output format — add `- json` under `search: formats:` in its `settings.yml`. |
 | `SEARCH_API_KEY` | — | Key for Brave or Serper. SearXNG needs none; leave it blank. |
 | `MONTHLY_ENRICHMENT_CAP` | `1000` | Enrichment runs per month. Reaching it stops enrichment, never scoring. |
-| `LICENCE_ENVIRONMENT` | `production` | Leave alone unless Numaya support says otherwise. |
+| `LICENCE_ENVIRONMENT` | `production` | Leave alone unless Numaya AI support says otherwise. |
 
 Rules, weights, band thresholds, your ICP and field mapping live in the **Greenlight Configuration** record
 in your workspace, editable like any other record.
@@ -58,7 +58,7 @@ tells you exactly how much, and offers a profile derived from your own companies
 Greenlight runs entirely inside your Twenty instance. Data leaves only where you configure it to:
 
 - **Your LLM and search providers**, using your own keys, only during enrichment.
-- **Numaya's licensing service**, which receives your licence key and workspace id — never lead or contact
+- **Numaya AI's licensing service**, which receives your licence key and workspace id — never lead or contact
   data — to check entitlement.
 
 Scoring itself makes no external call at all.
@@ -86,7 +86,7 @@ The full terms are reproduced here because the Twenty SDK's packer ships a fixed
 anyone who receives the software also receives these terms, so the README is the only place they can travel.
 Canonical text: <https://www.elastic.co/licensing/elastic-license>.
 
-**Licensor: Numaya**
+**Licensor: Numaya AI**
 
 **Acceptance.** By using the software, you agree to all of the terms and conditions below.
 

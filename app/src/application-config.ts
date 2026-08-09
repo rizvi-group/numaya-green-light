@@ -17,7 +17,7 @@ export default defineApplication({
   universalIdentifier: APPLICATION_UNIVERSAL_IDENTIFIER,
   displayName: APP_DISPLAY_NAME,
   description: APP_DESCRIPTION,
-  author: 'Numaya',
+  author: 'Numaya AI',
   category: 'Sales',
   websiteUrl: 'https://numaya.ai',
   emailSupport: 'support@numaya.ai',
@@ -33,7 +33,15 @@ export default defineApplication({
       description:
         "Use Twenty's built-in AI for enrichment when the workspace has it configured. Falls back to the LLM_* variables below, then to rules-only scoring.",
       type: FieldType.BOOLEAN,
-      value: true,
+      // A string, not `true`, and the same story for MONTHLY_ENRICHMENT_CAP
+      // below. Twenty encrypts every application-variable default on install
+      // (`encryptVersioned(input.value)`), and on 2.12 that reaches Node's
+      // cipher unconverted — a boolean throws `The "data" argument must be of
+      // type string ... Received type boolean (true)` and the whole install
+      // fails. Later servers coerce it first. Nothing is lost by sending the
+      // string: values come back out of the API as text anyway, which is why
+      // the reader is `readBooleanDefaultTrue(env['USE_TWENTY_AI'])`.
+      value: 'true',
     },
 
     LLM_BASE_URL: {
@@ -99,13 +107,15 @@ export default defineApplication({
       description:
         'Maximum enrichment runs per calendar month. Reaching the cap disables enrichment for the rest of the month; scoring continues either way.',
       type: FieldType.NUMBER,
-      value: 1000,
+      // A string for the same reason as USE_TWENTY_AI above; `readCap()` parses
+      // text regardless.
+      value: '1000',
     },
 
     LICENCE_KEY: {
       universalIdentifier: APP_VARIABLE_UNIVERSAL_IDENTIFIERS.LICENCE_KEY,
       description:
-        'Numaya licence key, e.g. NUMAYA-XXXXX-XXXXX-XXXXX-X. Without one the app runs in rules-only mode. Scoring never stops on a licence problem.',
+        'Numaya AI licence key, e.g. NUMAYA-XXXXX-XXXXX-XXXXX-X. Without one the app runs in rules-only mode. Scoring never stops on a licence problem.',
       type: FieldType.TEXT,
       isSecret: true,
     },
@@ -128,7 +138,7 @@ export default defineApplication({
       universalIdentifier:
         LICENCE_API_BASE_URL_APP_VARIABLE_UNIVERSAL_IDENTIFIER,
       description:
-        'Base URL of the Numaya licensing service, without a trailing slash. Only change this if Numaya support tells you to. If it is wrong the app runs in rules-only mode; scoring is unaffected.',
+        'Base URL of the Numaya AI licensing service, without a trailing slash. Only change this if Numaya AI support tells you to. If it is wrong the app runs in rules-only mode; scoring is unaffected.',
       type: FieldType.TEXT,
       value: DEFAULT_LICENCE_API_BASE_URL,
     },
@@ -154,7 +164,7 @@ export default defineApplication({
       universalIdentifier:
         LICENCE_ENVIRONMENT_APP_VARIABLE_UNIVERSAL_IDENTIFIER,
       description:
-        'Which Numaya licensing environment holds this licence. Leave on Production unless Numaya support issued you a sandbox key — a sandbox licence is invisible to a production check and reports as if the licence did not exist.',
+        'Which Numaya AI licensing environment holds this licence. Leave on Production unless Numaya AI support issued you a sandbox key — a sandbox licence is invisible to a production check and reports as if the licence did not exist.',
       type: FieldType.SELECT,
       options: [
         { label: 'Production', value: 'production' },

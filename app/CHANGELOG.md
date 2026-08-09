@@ -2,6 +2,19 @@
 
 All notable changes to this application are documented in this file.
 
+## 0.2.3
+
+- Application-variable defaults are now strings. `USE_TWENTY_AI` shipped `true` and
+  `MONTHLY_ENRICHMENT_CAP` shipped `1000`, and Twenty encrypts every default on install
+  (`encryptVersioned(input.value)`). On 2.12 that value reaches Node's cipher unconverted, so a
+  boolean aborts the whole install with `The "data" argument must be of type string ... Received
+  type boolean (true)` — from the UI as well as the CLI. Later servers coerce first, which is why
+  this never showed up in development. Runtime behaviour is unchanged: values come back out of the
+  API as text either way, which is what `readBooleanDefaultTrue()` and `readCap()` already parse.
+- Vendor identity is now **Numaya AI** — package author, the marketplace author field, the ELv2
+  licensor line, and the user-facing strings that name the vendor for support or licensing. The
+  product is still called Greenlight and the app's display name is unchanged.
+
 ## 0.2.2
 
 - Widened `engines.twenty` to `>=2.12.0 <3.0.0`. 0.2.1 declared a `2.26.0` floor, which is the

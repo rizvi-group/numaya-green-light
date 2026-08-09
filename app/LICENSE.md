@@ -1,6 +1,6 @@
 # Elastic License 2.0 (ELv2)
 
-**Licensor: Numaya**
+**Licensor: Numaya AI**
 
 ## Acceptance
 
