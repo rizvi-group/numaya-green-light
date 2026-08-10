@@ -2,6 +2,25 @@
 
 All notable changes to this application are documented in this file.
 
+## 0.2.4
+
+- **A licence pathway in the UI.** A new "Greenlight licence and enrichment" command opens a panel
+  stating which mode the workspace is running, whether enrichment is on, the masked key, and when
+  the licence was last checked. Until now that state was computed correctly and published nightly
+  but surfaced nowhere a person could read it: an admin wondering why nothing was being enriched
+  had to be told by a human, and one who wanted to fix it had nowhere to go, because `LICENCE_KEY`
+  is a settings field that presumes you already hold a key.
+- The panel offers a purchase route **only in the two states a purchase would fix** — no key at
+  all, and a plan that excludes enrichment. An expired licence, a rejected key, a wrong
+  environment or an unreachable service each have a specific remedy that the existing admin notice
+  already names, and a "Get a licence" button beside that advice would send somebody to spend
+  money on the wrong problem. A working licence never sees the button.
+- The route reads the published state and never validates. Validation stays on the nightly run, so
+  a human-triggered panel cannot put a network call to Numaya on the path, and there is only ever
+  one resolver whose answer can be trusted. The panel says when the state was taken instead.
+- The response carries the masked key only, and the route reads `LICENCE_KEY` solely to learn
+  whether one is set — never its value.
+
 ## 0.2.3
 
 - Application-variable defaults are now strings. `USE_TWENTY_AI` shipped `true` and

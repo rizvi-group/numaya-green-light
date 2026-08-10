@@ -51,6 +51,40 @@ export const LICENCE_ENVIRONMENT_APP_VARIABLE_UNIVERSAL_IDENTIFIER =
 export const LICENCE_REVALIDATE_LOGIC_FUNCTION_UNIVERSAL_IDENTIFIER =
   'fc2534ad-a3a1-4b05-bdf0-f2e7a1cef729';
 
+export const LICENCE_STATUS_LOGIC_FUNCTION_UNIVERSAL_IDENTIFIER =
+  '42eaa3bc-75b6-49be-863c-a3b3c539e3a2';
+
+export const LICENCE_FRONT_COMPONENT_UNIVERSAL_IDENTIFIER =
+  '42089a05-139e-4061-aaaa-1d53e851ac90';
+
+export const LICENCE_COMMAND_MENU_ITEM_UNIVERSAL_IDENTIFIER =
+  'b0316c8e-e4ad-492c-9197-f26c553c0151';
+
+/* -------------------------------------------------------------------------- */
+/* The licence panel                                                           */
+/* -------------------------------------------------------------------------- */
+
+export const LICENCE_ROUTE_PATH = '/greenlight/licence';
+
+export const LICENCE_CLIENT_PATH = `/s${LICENCE_ROUTE_PATH}`;
+
+/**
+ * Where "Get a licence" sends an admin.
+ *
+ * A constant rather than a literal in the component because it is the one part
+ * of this feature guaranteed to move: today numaya.ai has no Greenlight
+ * checkout, so the honest destination is the contact route, which reaches a
+ * human who can issue a key. When a real purchase page exists this is the only
+ * line that changes.
+ *
+ * The `source` parameter is not decoration. Without it there is no way to tell
+ * an enquiry that came from inside a customer's own CRM — someone who has
+ * already installed the app and hit the rules-only ceiling — from a cold
+ * website visitor, and those two deserve different replies.
+ */
+export const LICENCE_PURCHASE_URL =
+  'https://numaya.ai/contact?source=greenlight-app';
+
 /* -------------------------------------------------------------------------- */
 /* Endpoint shape — confirmed against the published spec and live HTTP         */
 /* -------------------------------------------------------------------------- */

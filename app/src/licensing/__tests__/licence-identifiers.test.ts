@@ -48,9 +48,10 @@ describe('licence universal identifiers', () => {
 
   it('should have collected every declared licence identifier', () => {
     // The base-URL application variable, the environment application variable,
-    // and the nightly re-validation cron function. Update this number when a
-    // licensing entity is added.
-    expect(licence.length).toBe(3);
+    // the nightly re-validation cron function, and the three entities behind the
+    // licence panel: its status route, its front component and its command menu
+    // item. Update this number when a licensing entity is added.
+    expect(licence.length).toBe(6);
   });
 
   it('should only contain valid UUID v4 values', () => {
