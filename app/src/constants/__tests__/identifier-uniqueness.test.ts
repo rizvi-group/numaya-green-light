@@ -121,6 +121,7 @@ describe('universal identifiers, across every constants module', () => {
       'logic-function-identifiers.ts',
       'next-action-kind-options.ts',
       'pipeline-identifiers.ts',
+      'sales-team-identifiers.ts',
       'universal-identifiers.ts',
     ]);
   });

@@ -9,6 +9,12 @@ import {
   GREENLIGHT_AUDIT_LOG_OBJECT_UNIVERSAL_IDENTIFIER,
   GREENLIGHT_CONFIG_OBJECT_UNIVERSAL_IDENTIFIER,
 } from 'src/constants/universal-identifiers';
+import {
+  SALES_STAFF_OBJECT_UNIVERSAL_IDENTIFIER,
+  STAFF_AVAILABILITY_OBJECT_UNIVERSAL_IDENTIFIER,
+  STAFF_CONTRACT_OBJECT_UNIVERSAL_IDENTIFIER,
+  STAFF_NOTE_OBJECT_UNIVERSAL_IDENTIFIER,
+} from 'src/constants/sales-team-identifiers';
 
 /**
  * The role every Greenlight logic function runs as.
@@ -244,6 +250,55 @@ export default defineApplicationRole({
         GREENLIGHT_AUDIT_LOG_OBJECT_UNIVERSAL_IDENTIFIER,
       canReadObjectRecords: true,
       canUpdateObjectRecords: true,
+      canSoftDeleteObjectRecords: false,
+      canDestroyObjectRecords: false,
+    },
+
+    /* ------------------------------------------------------------------ */
+    /* Sales-team records                                                  */
+    /*                                                                     */
+    /* Read on all four, so the self-service route can answer a team       */
+    /* member's question about themselves. Note what this does *not*       */
+    /* require: `workspaceMember` is still refused above. The route        */
+    /* resolves the caller's own id through `currentUser` on the metadata  */
+    /* API and filters these app-owned objects by it, so the staff         */
+    /* directory grant this app has never held is still not held.          */
+    /*                                                                     */
+    /* Write is limited to the staff record, because the only thing the    */
+    /* app writes on a person's behalf is their own working preferences    */
+    /* and availability. Notes and contracts are authored by managers      */
+    /* through the CRM under their own role, not by a function.            */
+    /* ------------------------------------------------------------------ */
+    {
+      objectUniversalIdentifier: SALES_STAFF_OBJECT_UNIVERSAL_IDENTIFIER,
+      canReadObjectRecords: true,
+      canUpdateObjectRecords: true,
+      canSoftDeleteObjectRecords: false,
+      canDestroyObjectRecords: false,
+    },
+    {
+      objectUniversalIdentifier:
+        STAFF_AVAILABILITY_OBJECT_UNIVERSAL_IDENTIFIER,
+      canReadObjectRecords: true,
+      canUpdateObjectRecords: true,
+      canSoftDeleteObjectRecords: false,
+      canDestroyObjectRecords: false,
+    },
+    {
+      objectUniversalIdentifier: STAFF_NOTE_OBJECT_UNIVERSAL_IDENTIFIER,
+      canReadObjectRecords: true,
+      canUpdateObjectRecords: false,
+      canSoftDeleteObjectRecords: false,
+      canDestroyObjectRecords: false,
+    },
+    {
+      // Read only, and the route that reads it never returns compensation.
+      // See `greenlight-staff-contract.ts` for why that restraint lives in the
+      // route rather than in a field permission: a field the response cannot
+      // carry cannot be leaked by a matching bug.
+      objectUniversalIdentifier: STAFF_CONTRACT_OBJECT_UNIVERSAL_IDENTIFIER,
+      canReadObjectRecords: true,
+      canUpdateObjectRecords: false,
       canSoftDeleteObjectRecords: false,
       canDestroyObjectRecords: false,
     },
