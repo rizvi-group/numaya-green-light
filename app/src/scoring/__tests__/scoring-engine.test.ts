@@ -381,6 +381,144 @@ describe('the default catalogue end to end', () => {
   });
 
   /* -------------------------------------------------------------------------- */
+  /* The excluded-industry gate                                                  */
+  /* -------------------------------------------------------------------------- */
+
+  describe('the excluded-industry gate', () => {
+    it('blocks an EXCLUDED lead however good it otherwise looks', () => {
+      const result = scoreLead({
+        lead: makeLead({ ...perfectLeadFields, industry: 'EXCLUDED' }),
+        now: NOW,
+        config: {},
+      });
+
+      expect(result.decision).toBe('blocked');
+      // Weight 0: the gate decides the outcome without touching the score.
+      expect(result.score).toBe(100);
+      expect(result.summary).toContain('EXCLUDED');
+    });
+
+    it('lets a GOVERNMENT_EDUCATION lead pass end to end', () => {
+      const result = scoreLead({
+        lead: makeLead({
+          ...perfectLeadFields,
+          industry: 'GOVERNMENT_EDUCATION',
+        }),
+        now: NOW,
+        config: { icp: { industries: ['GOVERNMENT_EDUCATION'] } },
+      });
+
+      expect(result.decision).toBe('approved');
+      expect(result.score).toBe(100);
+
+      const gate = result.trace.find(
+        (entry) => entry.ruleId === 'icp.industry-excluded',
+      );
+
+      expect(gate?.outcome).toBe('pass');
+      expect(gate?.pointsPossible).toBe(0);
+    });
+
+    it('leaves an industry-less lead unblocked — unknown is not excluded', () => {
+      const result = scoreLead({
+        lead: makeLead({ ...perfectLeadFields, industry: undefined }),
+        now: NOW,
+        config: {},
+      });
+
+      expect(result.decision).toBe('approved');
+
+      const gate = result.trace.find(
+        (entry) => entry.ruleId === 'icp.industry-excluded',
+      );
+
+      expect(gate?.outcome).toBe('not_applicable');
+    });
+  });
+
+  /* -------------------------------------------------------------------------- */
+  /* Company-held firmographics, through the default mapping                     */
+  /* -------------------------------------------------------------------------- */
+
+  describe('company-held firmographics', () => {
+    /** A Twenty-shaped lead: country and headcount live on Company, not Person. */
+    const companyLead = (company: Record<string, unknown>) =>
+      toLeadRecord({
+        id: 'company-fields-1',
+        companyName: 'Northwind Traders',
+        industry: 'Manufacturing',
+        name: { firstName: 'Ada', lastName: 'Lovelace' },
+        jobTitle: 'Chief Technology Officer',
+        emails: { primaryEmail: 'ada.lovelace@northwind.example', additionalEmails: [] },
+        phones: { primaryPhoneNumber: '+44 20 7946 0958' },
+        lastVerifiedAt: NOW.toISOString(),
+        optedOut: false,
+        company,
+      });
+
+    const icp = {
+      industries: ['Manufacturing'],
+      regions: ['AU'],
+      sizeBands: [{ label: 'Mid-market', minEmployees: 50, maxEmployees: 500 }],
+    };
+
+    it('reads region and size off the company record when the lead holds nothing', () => {
+      const result = scoreLead({
+        lead: companyLead({ name: 'Northwind Traders', country: 'AU', employeeCount: 120 }),
+        now: NOW,
+        config: { icp },
+      });
+
+      const region = result.trace.find((entry) => entry.ruleId === 'icp.region');
+      const size = result.trace.find(
+        (entry) => entry.ruleId === 'icp.company-size',
+      );
+
+      expect(region?.outcome).toBe('pass');
+      expect(region?.observations[0]?.mappedTo).toBe('company.country');
+      expect(size?.outcome).toBe('pass');
+      expect(size?.observations[0]?.mappedTo).toBe('company.employeeCount');
+    });
+
+    it('lets a human-held value on the lead win over the company record', () => {
+      // Candidate order is load-bearing: `field-access.ts` takes the first
+      // candidate that yields a value, so `country` must outrank
+      // `company.country`. The company says AU, the lead says NZ, and the ICP
+      // only sells into AU — the honest verdict is a miss on NZ.
+      const lead = companyLead({
+        name: 'Northwind Traders',
+        country: 'AU',
+        employeeCount: 120,
+      });
+
+      const result = scoreLead({
+        lead: { ...lead, fields: { ...lead.fields, country: 'NZ' } },
+        now: NOW,
+        config: { icp },
+      });
+
+      const region = result.trace.find((entry) => entry.ruleId === 'icp.region');
+
+      expect(region?.outcome).toBe('fail');
+      expect(region?.observations[0]?.mappedTo).toBe('country');
+    });
+
+    it('blocks on an EXCLUDED tag that arrives through the company relation', () => {
+      // No industry on the lead itself — the tag lives on the company, which
+      // is exactly the Twenty shape the mapping candidates exist for.
+      const lead = companyLead({ name: 'Northwind Traders', industry: 'EXCLUDED' });
+
+      const result = scoreLead({
+        lead: { ...lead, fields: { ...lead.fields, industry: undefined } },
+        now: NOW,
+        config: { icp },
+      });
+
+      expect(result.decision).toBe('blocked');
+    });
+  });
+
+  /* -------------------------------------------------------------------------- */
   /* Enriched values, read by the real rules                                     */
   /* -------------------------------------------------------------------------- */
 

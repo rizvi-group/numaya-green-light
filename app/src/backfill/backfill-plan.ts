@@ -99,16 +99,19 @@ export const BACKFILL_TICK_BUDGET_MS = 40_000;
  * ## The governing constraint is parity, not completeness
  *
  * The event path hands `scoring-run.ts` `event.properties.after` — every column
- * on the record — and then hydrates the company with exactly `{ id, name }` (see
- * `hydrateCompany`). A backfilled lead and a freshly-created lead must land on
- * the same score, or the gate queue becomes incoherent: the same person scores
- * one way if they were imported yesterday and another if they arrive tomorrow,
- * and nobody can explain the queue to the rep working it.
+ * on the record — and then hydrates the company with `{ id, name, industry,
+ * country, employeeCount }` (see `hydrateCompany`). A backfilled lead and a
+ * freshly-created lead must land on the same score, or the gate queue becomes
+ * incoherent: the same person scores one way if they were imported yesterday
+ * and another if they arrive tomorrow, and nobody can explain the queue to the
+ * rep working it.
  *
- * So this selection deliberately does **not** pull richer company data than the
- * event path can see. `company.industry` and `company.employees` would raise ICP
- * scores — and would raise them only for backfilled records. Being consistently
- * conservative beats being inconsistently generous.
+ * So this selection pulls exactly the company data the event path can see — no
+ * more, no less. The three firmographics are what the ICP rules and the
+ * exclusion gate read through the `company.*` mapping candidates; leaving them
+ * out here would make a backfilled record score as though its company carried
+ * nothing, and the two paths would disagree on the same record. Being
+ * identically informed beats being inconsistently generous.
  *
  * ## The three that are not about scoring
  *
@@ -153,7 +156,7 @@ export const backfillPersonSelection = (
     // versions. Supplying `company` is also what stops `hydrateCompany` spending
     // an extra query per record — the difference between 2 and 3 requests each.
     companyId: true,
-    company: { id: true, name: true },
+    company: { id: true, name: true, industry: true, country: true, employeeCount: true },
     greenlightSuppressed: true,
     greenlightSuppressionReason: true,
     // A scoring *input*, not bookkeeping: the resolved field mapping appends

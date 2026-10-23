@@ -65,7 +65,7 @@ import {
   loadPerson,
   pipelineOpportunitySelection,
   pipelinePersonSelection,
-  probeOpportunityOwner,
+  probeOpportunityCustomFields,
   readPipelineConfigRecord,
   stageValueFor,
   toLeadSnapshot,
@@ -77,6 +77,7 @@ import {
   writeOpportunityAdvice,
   writePersonAdvice,
   type OpportunityActivity,
+  type OpportunityCustomFields,
 } from 'src/logic-functions/pipeline-store';
 import { buildPipelineCard } from 'src/pipeline/next-action';
 import { isPersonDerivedLane } from 'src/pipeline/lanes';
@@ -318,31 +319,31 @@ const errorResult = (
 interface PipelineContext {
   readonly configRecord: Record<string, unknown> | null;
   readonly configInput: unknown;
-  /** Whether this workspace's Opportunity answers to `ownerId`. */
-  readonly withOwner: boolean;
+  /** Which workspace-custom Opportunity columns this read may select. */
+  readonly opportunityFields: OpportunityCustomFields;
   readonly notices: readonly string[];
 }
 
 /**
  * The preamble every operation shares: the configuration the readiness
- * arithmetic is computed against, and the one schema fact the selections depend
- * on. Two requests, paid once per call rather than once per action — which is
+ * arithmetic is computed against, and the schema facts the selections depend
+ * on. Three requests, paid once per call rather than once per action — which is
  * the argument `wire.ts` makes for there being one route in the first place.
  */
 const loadContext = async (deps: PipelineRunDeps): Promise<PipelineContext> => {
   const config = await readPipelineConfigRecord(deps.client);
-  const withOwner = await probeOpportunityOwner(deps.client);
+  const opportunityFields = await probeOpportunityCustomFields(deps.client);
 
   return {
     configRecord: config.record,
     configInput: toPipelineConfigInput(config.record),
-    withOwner,
+    opportunityFields,
     notices: [
       ...config.notices,
-      ...(withOwner
+      ...(opportunityFields.withAe || opportunityFields.withOwner
         ? []
         : [
-            'This workspace has no owner field on Opportunity, so the "owner assigned" step is shown as unchecked rather than unmet. Add one and Greenlight will read it.',
+            'This workspace has no owner or AE field on Opportunity, so the "owner assigned" step is shown as unchecked rather than unmet. Add one and Greenlight will read it.',
           ]),
     ],
   };
@@ -425,7 +426,7 @@ const buildBoardCards = async (
 
   const opportunities = await walkConnection(deps.client, {
     connection: 'opportunities',
-    selection: pipelineOpportunitySelection(context.withOwner),
+    selection: pipelineOpportunitySelection(context.opportunityFields),
     pages: BOARD_OPPORTUNITY_PAGES,
     label: 'deals',
   });
@@ -449,7 +450,7 @@ const buildBoardCards = async (
       activity.byOpportunityId.get(
         typeof node['id'] === 'string' ? node['id'] : '',
       ),
-      { withOwner: context.withOwner },
+      { ...context.opportunityFields },
     );
 
     const contactId = snapshot.pointOfContactId;
@@ -1645,7 +1646,7 @@ const resolveCardSubject = async (
       const opportunity = await loadOpportunity(
         deps.client,
         request.opportunityId,
-        context.withOwner,
+        context.opportunityFields,
       );
 
       if (opportunity !== null) {
@@ -1670,7 +1671,7 @@ const resolveCardSubject = async (
         opportunities = await loadOpportunitiesForPerson(
           deps.client,
           personId,
-          context.withOwner,
+          context.opportunityFields,
         );
       } catch (error) {
         logGreenlight('pipeline_person_opportunities_read_failed', {
@@ -1700,7 +1701,7 @@ const resolveCardSubject = async (
         activity.byOpportunityId.get(readText(node['id']) ?? '') as
           | OpportunityActivity
           | undefined,
-        { withOwner: context.withOwner },
+        { ...context.opportunityFields },
       ),
     ),
   };
@@ -1743,11 +1744,11 @@ const buildCardForPerson = async (
       const nodes = await loadOpportunitiesForPerson(
         deps.client,
         personId,
-        context.withOwner,
+        context.opportunityFields,
       );
 
       opportunities = nodes.map((node) =>
-        toOpportunitySnapshot(node, undefined, { withOwner: context.withOwner }),
+        toOpportunitySnapshot(node, undefined, { ...context.opportunityFields }),
       );
     } catch (error) {
       logGreenlight('pipeline_person_opportunities_read_failed', {

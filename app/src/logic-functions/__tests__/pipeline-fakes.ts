@@ -49,6 +49,8 @@ export interface FakeWorkspaceOptions {
   readonly config?: Record<string, unknown> | null;
   /** Does this workspace's Opportunity answer to `ownerId`? */
   readonly ownerField?: boolean;
+  /** Does this workspace's Opportunity answer to the `ae` select? */
+  readonly aeField?: boolean;
   readonly failConfigRead?: boolean;
   readonly failPeoplePages?: boolean;
   readonly failOpportunityPages?: boolean;
@@ -231,7 +233,7 @@ export const createFakeWorkspace = (
         const asked = Object.keys(selection(request, 'opportunities'));
         const filter = args(request, 'opportunities')['filter'];
 
-        // The owner probe, and the second thing this file got wrong.
+        // The custom-column probes, and the second thing this file got wrong.
         //
         // It used to throw `Cannot query field "ownerId"` whenever `ownerId`
         // appeared in the *selection*, which is a server that does not exist:
@@ -243,10 +245,20 @@ export const createFakeWorkspace = (
         //
         // What the real API rejects is the *filter*, so that is what this
         // rejects, with the message it actually sends. A workspace whose
-        // Opportunity has no owner column therefore fails the probe here for the
-        // same reason it fails it live.
+        // Opportunity has no owner column therefore fails the probe here for
+        // the same reason it fails it live. The `ae` select is the same probe
+        // against the same rule, one custom field later.
         if (path(filter, 'ownerId') !== undefined && options.ownerField !== true) {
           throw new Error('Object opportunity doesn\'t have any "ownerId" field.');
+        }
+
+        if (path(filter, 'ae') !== undefined && options.aeField !== true) {
+          throw new Error('Object opportunity doesn\'t have any "ae" field.');
+        }
+
+        // The probes proper: `first: 1`, filtered on the custom column, id only.
+        if (path(filter, 'ownerId') !== undefined || path(filter, 'ae') !== undefined) {
+          return connection('opportunities', []);
         }
 
         // The owner probe proper: `first: 1`, filtered on `ownerId`, id only.

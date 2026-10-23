@@ -19,11 +19,13 @@ import { dataFreshnessRule } from 'src/scoring/rules/data-freshness.rule';
 import { icpCompanySizeRule } from 'src/scoring/rules/icp-company-size.rule';
 import { icpIndustryRule } from 'src/scoring/rules/icp-industry.rule';
 import { icpRegionRule } from 'src/scoring/rules/icp-region.rule';
+import { industryExcludedRule } from 'src/scoring/rules/industry-excluded.rule';
 import type { RuleCatalogueEntry, ScoringRule } from 'src/scoring/types';
 
 export const ALL_RULES: readonly ScoringRule[] = [
   complianceOptOutRule,
   icpIndustryRule,
+  industryExcludedRule,
   icpRegionRule,
   icpCompanySizeRule,
   companyIdentifiedRule,
@@ -47,6 +49,7 @@ export {
   icpCompanySizeRule,
   icpIndustryRule,
   icpRegionRule,
+  industryExcludedRule,
 };
 
 /**

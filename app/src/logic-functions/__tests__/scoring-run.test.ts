@@ -631,6 +631,92 @@ describe('fail-open', () => {
     expect(outcome.status).toBe('scored');
   });
 
+  it('hydrates the company with the fields the ICP rules and the exclusion gate read', async () => {
+    // The engine can only score what the selection actually fetches: without
+    // `industry`, `country` and `employeeCount` here, neither `icp.region`,
+    // `icp.company-size`, `icp.industry` nor the exclusion gate can ever see a
+    // value the company record genuinely holds. Pinned against
+    // `backfillPersonSelection`, which must stay in lockstep.
+    const client = createFakeClient({
+      query: (request) => {
+        if ('companies' in request) {
+          return asConnection('companies', [
+            {
+              id: '22222222-2222-4222-8222-222222222222',
+              name: 'Acme Ltd',
+              industry: 'Manufacturing',
+              country: 'AU',
+              employeeCount: 250,
+            },
+          ]);
+        }
+
+        return withConfig({ icpRegions: ['AU'] });
+      },
+    });
+
+    const outcome = await runScoring({
+      client,
+      event: createdEvent(strongPerson({ company: undefined })),
+      now: NOW,
+    });
+
+    expect(outcome.status).toBe('scored');
+
+    const companyNode = (
+      client.callsTo('companies')[0] as Record<string, unknown>
+    ) as { edges: { node: unknown } };
+
+    expect(companyNode.edges.node).toEqual({
+      id: true,
+      name: true,
+      industry: true,
+      country: true,
+      employeeCount: true,
+    });
+
+    // And the fetched fields genuinely reach the engine.
+    const trace = mutationData(client.callsTo('updatePerson')[0]!)[
+      'greenlightTrace'
+    ] as { rules: { ruleId: string; observations: { mappedTo: string }[] }[] };
+
+    const region = trace.rules.find((entry) => entry.ruleId === 'icp.region');
+
+    expect(region?.observations[0]?.mappedTo).toBe('company.country');
+  });
+
+  it('blocks a lead whose hydrated company carries the EXCLUDED tag', async () => {
+    const client = createFakeClient({
+      query: (request) => {
+        if ('companies' in request) {
+          return asConnection('companies', [
+            {
+              id: '22222222-2222-4222-8222-222222222222',
+              name: 'Acme Ltd',
+              industry: 'EXCLUDED',
+              country: 'AU',
+              employeeCount: 250,
+            },
+          ]);
+        }
+
+        return withConfig();
+      },
+    });
+
+    const outcome = await runScoring({
+      client,
+      event: createdEvent(strongPerson({ company: undefined })),
+      now: NOW,
+    });
+
+    expect(outcome.status).toBe('scored');
+
+    expect(
+      mutationData(client.callsTo('updatePerson')[0]!)['greenlightDecision'],
+    ).toBe('BLOCKED');
+  });
+
   it('skips an event it cannot read rather than throwing', async () => {
     const client = createFakeClient();
 

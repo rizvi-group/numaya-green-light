@@ -199,6 +199,14 @@ export interface OpportunitySnapshot {
   /** ISO 8601. */
   readonly closeDate?: string | null;
   readonly ownerId?: string | null;
+  /**
+   * The workspace's own account-executive select on Opportunity, when it has
+   * one. Not shipped by Twenty and not shipped by Greenlight: a workspace
+   * custom field, selected only after a probe confirmed it exists (see
+   * `pipelineOpportunitySelection`), which is why `undefined` — the field is
+   * not there — stays distinguishable from `null`/`''` — read, and unassigned.
+   */
+  readonly ae?: string | null;
   readonly pointOfContactId?: string | null;
   readonly companyId?: string | null;
   /** ISO 8601. */

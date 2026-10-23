@@ -21,9 +21,15 @@
  *   1. `the enriched value moves the score` — the expensive path. Four hops,
  *      one provider call, and the chain ends because a woken enrichment run
  *      finds no gaps and returns *before writing anything*.
- *   2. `the enriched value does not move the score` — the common path. Three
- *      hops, and the chain ends one step earlier because the outcome
- *      fingerprint is unchanged and the scorer writes nothing at all.
+ *   2. `the enriched value does not move the score` — the common path. The
+ *      score, band and decision are identical after enrichment, so nothing
+ *      about the *outcome* a rep sees changes — but since the excluded-
+ *      industry gate became answerable the moment enrichment filled the
+ *      industry, its trace verdict flips `not_applicable` → `pass` (weight 0,
+ *      so no points move), the fingerprint changes with it, and the scorer
+ *      records once more. The chain then ends because the settling enrichment
+ *      run finds no gaps and writes nothing. The guarantee this scenario pins
+ *      is that the score never moves and the chain still terminates.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -331,16 +337,19 @@ describe('the enrichment ⇄ scoring cycle, when enrichment moves the score', ()
 /* 2 — the enriched value does not move the score                              */
 /* -------------------------------------------------------------------------- */
 
-describe('the enrichment ⇄ scoring cycle, when enrichment moves nothing', () => {
+describe('the enrichment ⇄ scoring cycle, when enrichment moves nothing the rep can see', () => {
   /**
    * The shipped default: an empty ICP industry list, so `icp.industry` is
-   * `not_applicable` whether or not an industry is known. Enrichment still runs
-   * and still writes, but the score, band, decision and every rule verdict are
-   * unchanged — so the fingerprint matches and the scorer writes nothing.
+   * `not_applicable` whether or not an industry is known, and the score, band
+   * and decision are identical after enrichment. The excluded-industry gate
+   * does change verdict — unknown industry is `not_applicable`, a known one is
+   * `pass` at weight 0 — so the scorer writes the new trace once and the next
+   * enrichment run finds no gaps. Same termination point as the expensive
+   * path, one provider call, and a score that never moved.
    */
   const world = () => createWorld([]);
 
-  it('stops at the scorer, one hop earlier', async () => {
+  it('records the newly answerable gate once, then stops', async () => {
     const state = world();
 
     const hops = await state.drive(['jobTitle']);
@@ -349,23 +358,24 @@ describe('the enrichment ⇄ scoring cycle, when enrichment moves nothing', () =
       'scoring',
       'enrichment',
       'scoring',
+      'enrichment',
     ]);
 
     expect(hops[hops.length - 1]?.wrote).toEqual([]);
-    const outcomes = state.scoringOutcomes;
-
-    expect(outcomes[outcomes.length - 1]?.status).toBe('unchanged');
   });
 
-  it('never wakes enrichment a second time', async () => {
+  it('never moves the score, and never wakes a provider twice', async () => {
     const state = world();
 
     await state.drive(['jobTitle']);
 
+    // One search, two model calls, all from run 1 — the second enrichment hop
+    // returned on the shelf-life cache before reaching either provider.
     expect(state.search.queries).toHaveLength(1);
-    // One scoring write and one enrichment write. The second scoring pass wrote
-    // nothing, which is what stops the chain.
-    expect(state.personWrites).toHaveLength(2);
-    expect(state.auditRows).toHaveLength(1);
+    expect(state.reasoning.calls).toHaveLength(2);
+
+    const [firstScore, secondScore] = scoresWritten(state);
+
+    expect(secondScore).toBe(firstScore);
   });
 });

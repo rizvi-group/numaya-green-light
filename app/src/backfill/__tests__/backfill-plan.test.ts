@@ -89,11 +89,17 @@ describe('backfillPersonSelection', () => {
     expect(selection['updatedAt']).toBe(true);
   });
 
-  it('should take no more company data than the event path can see', () => {
-    // Parity with `hydrateCompany`, deliberately. Richer company data would
-    // raise ICP scores for backfilled records only, so the same person would
-    // score differently depending on when they arrived.
-    expect(selection['company']).toEqual({ id: true, name: true });
+  it('should read exactly the company data the event path can see', () => {
+    // Parity with `hydrateCompany`, deliberately. Any difference in either
+    // direction — richer here, richer there — makes the same person score
+    // differently depending on when they arrived.
+    expect(selection['company']).toEqual({
+      id: true,
+      name: true,
+      industry: true,
+      country: true,
+      employeeCount: true,
+    });
   });
 
   it('should append configured field names without displacing a shipped one', () => {

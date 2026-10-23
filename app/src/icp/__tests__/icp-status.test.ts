@@ -20,15 +20,22 @@ const seededRecord = (
 });
 
 describe('the rule/dimension map', () => {
-  it('covers every ICP rule in the catalogue', () => {
+  it('covers every ICP rule in the catalogue that can carry points', () => {
     // If a release adds a fourth ICP rule and forgets this map, an unconfigured
     // dimension would be reported as configured — the exact error this whole
     // surface exists to prevent. Cheap to guard.
-    const icpRuleIds = ALL_RULES.filter(
-      (rule) => rule.category === 'icp',
+    //
+    // A zero-weight pure gate (the excluded-industry block) is exempt: it has
+    // no config list that switches it on and can never be idle points, so
+    // there is no dimension for it to be missing from. Everything else in the
+    // ICP category must map.
+    const pointCarryingIcpRuleIds = ALL_RULES.filter(
+      (rule) => rule.category === 'icp' && rule.defaultWeight > 0,
     ).map((rule) => rule.id);
 
-    expect(icpRuleIds.sort()).toEqual(Object.keys(ICP_RULE_DIMENSIONS).sort());
+    expect(pointCarryingIcpRuleIds.sort()).toEqual(
+      Object.keys(ICP_RULE_DIMENSIONS).sort(),
+    );
   });
 });
 

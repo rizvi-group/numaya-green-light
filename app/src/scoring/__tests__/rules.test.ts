@@ -11,6 +11,7 @@ import {
   icpCompanySizeRule,
   icpIndustryRule,
   icpRegionRule,
+  industryExcludedRule,
   ALL_RULES,
 } from 'src/scoring/rules';
 import { scoreLead } from 'src/scoring';
@@ -32,7 +33,29 @@ describe('rule catalogue', () => {
     for (const rule of ALL_RULES) {
       expect(rule.question.length).toBeGreaterThan(10);
       expect(rule.why.length).toBeGreaterThan(30);
-      expect(rule.defaultWeight).toBeGreaterThan(0);
+    }
+  });
+
+  /**
+   * Weight is for rules that contribute to the score. A blocking rule already
+   * decides the outcome on its own, so one that exists purely to gate carries
+   * weight 0 and would be double-counted at any other weight — the HANDOFF's
+   * own criticism of `compliance.opt-out`'s 15 points. Pure gates are named
+   * here rather than allowed by weakening the assertion, so adding a second
+   * one is a decision someone has to write down.
+   */
+  it('gives every rule scoring weight, except the named pure gates', () => {
+    const PURE_GATES: Readonly<Record<string, number>> = {
+      'icp.industry-excluded': 0,
+    };
+
+    for (const rule of ALL_RULES) {
+      if (rule.id in PURE_GATES) {
+        expect(rule.defaultSeverity).toBe('blocking');
+        expect(rule.defaultWeight).toBe(PURE_GATES[rule.id]);
+      } else {
+        expect(rule.defaultWeight).toBeGreaterThan(0);
+      }
     }
   });
 
@@ -44,6 +67,61 @@ describe('rule catalogue', () => {
       id: ALL_RULES[0]?.id,
       defaultSeverity: ALL_RULES[0]?.defaultSeverity,
     });
+  });
+});
+
+describe('icp.industry-excluded', () => {
+  it('fails, as a blocking gate, on the literal EXCLUDED value', () => {
+    const verdict = evaluateRule(industryExcludedRule, { industry: 'EXCLUDED' });
+
+    expect(verdict.outcome).toBe('fail');
+    expect(industryExcludedRule.defaultSeverity).toBe('blocking');
+    expect(verdict.explanation).toContain('EXCLUDED');
+  });
+
+  it('normalises case and spacing the way every other list rule does', () => {
+    const verdict = evaluateRule(industryExcludedRule, {
+      industry: '  excluded ',
+    });
+
+    expect(verdict.outcome).toBe('fail');
+  });
+
+  it('is not applicable when no industry is recorded, so silence never blocks', () => {
+    const verdict = evaluateRule(industryExcludedRule, {});
+
+    expect(verdict.outcome).toBe('not_applicable');
+    // The HANDOFF's double-counting critique, held by test: the rule is a pure
+    // gate, so even its pass earns nothing.
+    expect(industryExcludedRule.defaultWeight).toBe(0);
+  });
+
+  it('passes any other industry — GOVERNMENT_EDUCATION above all', () => {
+    // Public-sector work is a market the board chases through the front door;
+    // the rule only ever blocks the literal tag, and this pins that.
+    const government = evaluateRule(industryExcludedRule, {
+      industry: 'GOVERNMENT_EDUCATION',
+    });
+
+    expect(government.outcome).toBe('pass');
+
+    const ordinary = evaluateRule(industryExcludedRule, {
+      industry: 'Manufacturing',
+    });
+
+    expect(ordinary.outcome).toBe('pass');
+  });
+
+  it('does not consult the ICP lists — the tag is the whole question', () => {
+    // Even a workspace that (mis)configured EXCLUDED as a target industry is
+    // not allowed to un-exclude a company. The value means "never work with".
+    const verdict = evaluateRule(
+      industryExcludedRule,
+      { industry: 'EXCLUDED' },
+      { icp: { industries: ['EXCLUDED'], regions: [], sizeBands: [] } },
+    );
+
+    expect(verdict.outcome).toBe('fail');
   });
 });
 

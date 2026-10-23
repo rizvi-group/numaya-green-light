@@ -539,6 +539,31 @@ const decisionMakerOnRecord = define({
   },
 });
 
+/**
+ * The select value that means "we read the field, and nobody has the deal".
+ *
+ * An explicit UNASSIGNED option exists precisely so a workspace can say "looked,
+ * unclaimed" rather than leaving silence — so it must land as `unmet`, the same
+ * as an empty value, and not fall through to any fallback.
+ */
+const AE_UNASSIGNED = 'UNASSIGNED';
+
+/**
+ * Ownership is read from the workspace's own AE select, with `ownerId` behind
+ * it for workspaces that have one.
+ *
+ * The AE field holds agent names (`ENTERPRISE_AE_1`, `MID_MARKET_SALES_LEAD`,
+ * …), which are not workspace members, so Twenty's `owner` — a member relation
+ * — cannot carry them. Where the field exists, it is the answer: a set value
+ * other than `UNASSIGNED` is met, and `UNASSIGNED` or an empty value is unmet,
+ * full stop, because the workspace has already answered the question and a
+ * member id cannot overrule it.
+ *
+ * Where the field does not exist (`ae` was never read), the criterion falls
+ * back to the member-style `ownerId` it originally read, so a workspace that
+ * assigns deals through Twenty's owner column keeps exactly the behaviour it
+ * had. Neither field present is `indeterminate`, as before.
+ */
 const ownerAssigned = define({
   id: 'screening.owner-assigned',
   label: 'owner assigned',
@@ -548,6 +573,27 @@ const ownerAssigned = define({
   sentence:
     'Put a name against this one. An unowned deal is nobody\'s Monday morning.',
   decide: ({ lead, opportunity }) => {
+    const ae = opportunity?.ae;
+
+    if (wasRead(ae)) {
+      const assigned = trimmed(ae);
+
+      if (assigned !== '' && assigned.toUpperCase() !== AE_UNASSIGNED) {
+        return {
+          status: 'met',
+          evidence: `the deal is assigned to ${assigned}`,
+        };
+      }
+
+      return {
+        status: 'unmet',
+        evidence:
+          assigned.toUpperCase() === AE_UNASSIGNED
+            ? 'the deal is explicitly unassigned'
+            : 'nobody owns this deal',
+      };
+    }
+
     const dealOwner = opportunity?.ownerId;
     const leadOwner = lead.ownerId;
 

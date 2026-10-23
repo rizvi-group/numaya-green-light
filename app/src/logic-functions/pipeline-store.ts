@@ -433,23 +433,42 @@ export const pipelinePersonSelection = (): Record<string, unknown> => ({
 });
 
 /**
- * The Opportunity columns, with `ownerId` behind a probe.
+ * Which workspace-custom Opportunity columns this read may select.
+ *
+ * Both members name fields Twenty does not ship, so both are behind probes:
+ * selecting a column the object lacks is accepted and returns `null`, which
+ * would read as "this deal has no owner" on a workspace where the honest answer
+ * is "there is no such field". See `pipelineOpportunitySelection` and
+ * `probeOpportunityColumn` for the two halves of that argument.
+ */
+export interface OpportunityCustomFields {
+  /** Whether this workspace's Opportunity answers to `ownerId`. */
+  readonly withOwner: boolean;
+  /** Whether this workspace's Opportunity answers to the `ae` select. */
+  readonly withAe: boolean;
+}
+
+/**
+ * The Opportunity columns, with `ownerId` and `ae` behind probes.
  *
  * Stock Twenty's Opportunity has no owner column; plenty of workspaces add one,
- * and the `owner assigned` exit criterion asks for it by that name.
+ * and the `owner assigned` exit criterion asks for it by that name. The `ae`
+ * select is the same story one layer up: a workspace custom field holding agent
+ * names (`ENTERPRISE_AE_1`, `MID_MARKET_AE_2`, …) that a member-typed `owner`
+ * relation cannot express, which is why the criterion reads it first.
  *
- * `withOwner` is not an optimisation and it is not defensive: selecting a column
- * Twenty does not have is *accepted* and comes back `null` (see
- * `probeOpportunityOwner`), so leaving `ownerId` in unconditionally would not
+ * `withOwner`/`withAe` are not optimisations and not defensive: selecting a
+ * column Twenty does not have is *accepted* and comes back `null` (see
+ * `probeOpportunityColumn`), so leaving either in unconditionally would not
  * fail — it would quietly produce a `null` that reads as "this deal has no
- * owner". Omitting the column is the only way to leave `LeadSnapshot.ownerId`
+ * owner". Omitting the column is the only way to leave the snapshot field
  * `undefined`, and `undefined` is what makes the criterion report
  * `indeterminate` rather than asserting that nobody owns a deal we never looked
  * at. The `undefined` / `null` distinction in `src/pipeline/types.ts` is load
  * bearing here, exactly as it is for the activity reads above.
  */
 export const pipelineOpportunitySelection = (
-  withOwner: boolean,
+  { withOwner, withAe }: OpportunityCustomFields,
 ): Record<string, unknown> => ({
   id: true,
   createdAt: true,
@@ -462,15 +481,16 @@ export const pipelineOpportunitySelection = (
   pointOfContactId: true,
   greenlightAdvisedAt: true,
   ...(withOwner ? { ownerId: true } : {}),
+  ...(withAe ? { ae: true } : {}),
 });
 
 /**
- * Does this workspace's Opportunity answer to `ownerId`?
+ * Does this workspace's Opportunity answer to a given column?
  *
- * One request, at `first: 1`, once per board read. Cheaper than discovering the
- * answer by having the first full page rejected, and the answer is reported to
- * the caller so the board can say why an owner criterion is unanswerable rather
- * than leaving a rep to wonder.
+ * One request, at `first: 1`, once per board read per column. Cheaper than
+ * discovering the answer by having the first full page rejected, and the answer
+ * is reported to the caller so the board can say why an owner criterion is
+ * unanswerable rather than leaving a rep to wonder.
  *
  * ## Why the probe is a filter and not a selection
  *
@@ -507,19 +527,20 @@ export const pipelineOpportunitySelection = (
  * does, which is the point — this asks about the *schema*, not the data.
  *
  * The residual risk is the `taskTargets` failure mode in reverse: a column that
- * is selectable but not filterable would be reported absent, `withOwner` would
- * be `false`, and the criterion would report `indeterminate`. That is "Greenlight
+ * is selectable but not filterable would be reported absent, the flag would be
+ * `false`, and the criterion would report `indeterminate`. That is "Greenlight
  * could not check", which is a true statement and a safe one. The failure
  * direction of the old probe was an assertion about a rep's pipeline that was
  * simply false, and those two are not comparable.
  */
-export const probeOpportunityOwner = async (
+export const probeOpportunityColumn = async (
   client: GreenlightApiClient,
+  column: 'ownerId' | 'ae',
 ): Promise<boolean> => {
   try {
     const response = await client.query({
       opportunities: {
-        __args: { first: 1, filter: { ownerId: { is: 'NOT_NULL' } } },
+        __args: { first: 1, filter: { [column]: { is: 'NOT_NULL' } } },
         edges: { node: { id: true } },
       },
     });
@@ -531,6 +552,33 @@ export const probeOpportunityOwner = async (
   } catch {
     return false;
   }
+};
+
+/** Does this workspace's Opportunity answer to `ownerId`? */
+export const probeOpportunityOwner = (
+  client: GreenlightApiClient,
+): Promise<boolean> => probeOpportunityColumn(client, 'ownerId');
+
+/** Does this workspace's Opportunity answer to the `ae` select? */
+export const probeOpportunityAe = (
+  client: GreenlightApiClient,
+): Promise<boolean> => probeOpportunityColumn(client, 'ae');
+
+/**
+ * Both probes, once per board read.
+ *
+ * Two requests rather than one because a combined filter is an AND: a workspace
+ * with `ownerId` but no `ae` would reject the whole thing and lose both answers.
+ */
+export const probeOpportunityCustomFields = async (
+  client: GreenlightApiClient,
+): Promise<OpportunityCustomFields> => {
+  const [withOwner, withAe] = await Promise.all([
+    probeOpportunityOwner(client),
+    probeOpportunityAe(client),
+  ]);
+
+  return { withOwner, withAe };
 };
 
 /* -------------------------------------------------------------------------- */
@@ -656,7 +704,7 @@ export interface OpportunityActivity {
 export const toOpportunitySnapshot = (
   opportunity: Record<string, unknown>,
   activity: OpportunityActivity | undefined,
-  { withOwner }: { withOwner: boolean },
+  { withOwner, withAe }: OpportunityCustomFields,
 ): OpportunitySnapshot => {
   const rawAmount = opportunity['amount'];
   const amount = isPlainRecord(rawAmount) ? rawAmount['amountMicros'] : rawAmount;
@@ -671,6 +719,7 @@ export const toOpportunitySnapshot = (
         : null,
     closeDate: text(opportunity['closeDate']),
     ...(withOwner ? { ownerId: text(opportunity['ownerId']) } : {}),
+    ...(withAe ? { ae: text(opportunity['ae']) } : {}),
     pointOfContactId: text(opportunity['pointOfContactId']),
     companyId: text(opportunity['companyId']),
     createdAt: text(opportunity['createdAt']),
@@ -877,12 +926,12 @@ export const loadPerson = async (
 export const loadOpportunity = async (
   client: GreenlightApiClient,
   opportunityId: string,
-  withOwner: boolean,
+  fields: OpportunityCustomFields,
 ): Promise<Record<string, unknown> | null> => {
   const response = await client.query({
     opportunities: {
       __args: { filter: { id: { eq: opportunityId } }, first: 1 },
-      edges: { node: pipelineOpportunitySelection(withOwner) },
+      edges: { node: pipelineOpportunitySelection(fields) },
     },
   });
 
@@ -892,7 +941,7 @@ export const loadOpportunity = async (
 export const loadOpportunitiesForPerson = async (
   client: GreenlightApiClient,
   personId: string,
-  withOwner: boolean,
+  fields: OpportunityCustomFields,
 ): Promise<Record<string, unknown>[]> => {
   const response = await client.query({
     opportunities: {
@@ -900,7 +949,7 @@ export const loadOpportunitiesForPerson = async (
         filter: { pointOfContactId: { eq: personId } },
         first: PIPELINE_PAGE_SIZE,
       },
-      edges: { node: pipelineOpportunitySelection(withOwner) },
+      edges: { node: pipelineOpportunitySelection(fields) },
     },
   });
 

@@ -563,7 +563,10 @@ describe.skipIf(!LIVE)('every read this app issues', () => {
 
         await walkConnection(client, {
           connection: 'opportunities',
-          selection: pipelineOpportunitySelection(true),
+          selection: pipelineOpportunitySelection({
+            withOwner: true,
+            withAe: true,
+          }),
           pages: 2,
           label: 'deals',
         });
@@ -624,9 +627,18 @@ describe.skipIf(!LIVE)('every read this app issues', () => {
     it('reads single records and a person’s deals', async () => {
       const sent = await drive(remote, async (client) => {
         await loadPerson(client, ABSENT_ID);
-        await loadOpportunity(client, ABSENT_ID, true);
-        await loadOpportunity(client, ABSENT_ID, false);
-        await loadOpportunitiesForPerson(client, ABSENT_ID, true);
+        await loadOpportunity(client, ABSENT_ID, {
+          withOwner: true,
+          withAe: true,
+        });
+        await loadOpportunity(client, ABSENT_ID, {
+          withOwner: false,
+          withAe: false,
+        });
+        await loadOpportunitiesForPerson(client, ABSENT_ID, {
+          withOwner: true,
+          withAe: true,
+        });
       });
 
       await assertArgumentsAccepted(sent);
@@ -743,7 +755,7 @@ describe.skipIf(!LIVE)('every read this app issues', () => {
           ['people', pipelinePersonSelection()],
           ['people', suppressionLeadSelection()],
           ['people', backfillPersonSelection()],
-          ['opportunities', pipelineOpportunitySelection(false)],
+          ['opportunities', pipelineOpportunitySelection({ withOwner: false, withAe: false })],
           ['companies', { id: true, name: true }],
         ] as const) {
           await client.query({

@@ -226,12 +226,46 @@ describe('the board', () => {
         opportunities: [anOpportunity()],
       });
 
-      expect(response.notices.join(' ')).toContain('no owner field on Opportunity');
+      expect(response.notices.join(' ')).toContain(
+        'no owner or AE field on Opportunity',
+      );
       expect(
         lane(response, 'new').cards[0]?.readiness.indeterminate.map(
           (result) => result.criterionId,
         ),
       ).toContain('screening.owner-assigned');
+    });
+
+    it('should read ownership off the ae select when the workspace has one', async () => {
+      const response = await board({
+        people: [
+          aPerson(),
+          aPerson({
+            id: 'person-b',
+            name: { firstName: 'Owen', lastName: 'Rahman' },
+            emails: { primaryEmail: 'owen@northwind.example' },
+          }),
+        ],
+        opportunities: [
+          anOpportunity({ stage: 'NEW', ae: 'MID_MARKET_AE_2' }),
+          anOpportunity({
+            id: 'opportunity-b',
+            stage: 'NEW',
+            ae: 'UNASSIGNED',
+            pointOfContactId: 'person-b',
+          }),
+        ],
+        aeField: true,
+      });
+
+      const statuses = lane(response, 'new').cards.map((card) =>
+        card.readiness.results
+          .find((result) => result.criterionId === 'screening.owner-assigned')
+          ?.status,
+      );
+
+      expect(statuses).toContain('met');
+      expect(statuses).toContain('unmet');
     });
 
     it('should never throw, even when every read fails at once', async () => {

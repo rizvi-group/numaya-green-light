@@ -25,8 +25,27 @@ import type {
 export const DEFAULT_FIELD_MAPPING: FieldMapping = {
   companyName: ['companyName', 'company.name', 'company', 'accountName'],
   industry: ['industry', 'company.industry', 'sector'],
-  region: ['region', 'country', 'address.addressCountry', 'company.region'],
-  employeeCount: ['employees', 'employeeCount', 'company.employees', 'companySize'],
+  // `company.country` and `company.employeeCount` exist because a Twenty
+  // workspace that keeps its firmographics on Company — industry, country,
+  // employeeCount are Company columns there, not Person columns — has nowhere
+  // else for the region and size rules to read. They sit with the other
+  // `company.*` paths, behind every Person-held candidate, so a value a human
+  // put on the lead itself still wins and the company only fills the hole.
+  // `withEnrichedFallbacks` appends the enriched paths after all of these.
+  region: [
+    'region',
+    'country',
+    'address.addressCountry',
+    'company.region',
+    'company.country',
+  ],
+  employeeCount: [
+    'employees',
+    'employeeCount',
+    'company.employees',
+    'company.employeeCount',
+    'companySize',
+  ],
   contactName: ['name', 'fullName', 'contactName', 'firstName'],
   // `position` is deliberately NOT a candidate. On Twenty — the only platform
   // this ships on — `position` is the row-ordering number, not a job title, so

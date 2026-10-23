@@ -188,6 +188,23 @@ describe('resolveConfig', () => {
     expect(resolution.degradations).toHaveLength(0);
   });
 
+  it('offers the company firmographics behind every human-held candidate', () => {
+    // A Twenty workspace keeps country and headcount on Company; the defaults
+    // must reach them without a workspace configuring anything — but only after
+    // every lead-held candidate, so a human value always wins the ordering.
+    const { fieldMapping } = resolveConfig({}).config;
+
+    expect(fieldMapping.region).toContain('company.country');
+    expect(fieldMapping.region.indexOf('company.country')).toBeGreaterThan(
+      fieldMapping.region.indexOf('country'),
+    );
+
+    expect(fieldMapping.employeeCount).toContain('company.employeeCount');
+    expect(fieldMapping.employeeCount.indexOf('company.employeeCount')).toBeGreaterThan(
+      fieldMapping.employeeCount.indexOf('employeeCount'),
+    );
+  });
+
   it('keeps the default mapping for an unusable entry', () => {
     const resolution = resolveConfig({ fieldMapping: { companyName: 42 } });
 

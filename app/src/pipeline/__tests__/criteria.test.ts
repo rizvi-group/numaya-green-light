@@ -325,6 +325,52 @@ describe('screening.owner-assigned', () => {
 
     expect(result.status).toBe('indeterminate');
   });
+
+  /* ---------------------------------------------------------------------- */
+  /* The ae select, which is where ownership actually lives                  */
+  /* ---------------------------------------------------------------------- */
+
+  it('should be met when the ae select names an agent', () => {
+    const result = resultOf(
+      'new_to_screening',
+      snapshotOf({}, { ae: 'MID_MARKET_AE_2' }),
+      id,
+    );
+
+    expect(result.status).toBe('met');
+    expect(result.evidence).toContain('MID_MARKET_AE_2');
+  });
+
+  it('should be unmet on an explicit UNASSIGNED, even where a member owner exists', () => {
+    // The select exists precisely so the workspace can say "looked, unclaimed";
+    // falling through to ownerId would un-say it.
+    const result = resultOf(
+      'new_to_screening',
+      snapshotOf({}, { ae: 'UNASSIGNED', ownerId: 'member-1' }),
+      id,
+    );
+
+    expect(result.status).toBe('unmet');
+    expect(result.evidence).toBe('the deal is explicitly unassigned');
+  });
+
+  it('should be unmet when the ae field was read and is empty', () => {
+    const result = resultOf('new_to_screening', snapshotOf({}, { ae: null }), id);
+
+    expect(result.status).toBe('unmet');
+    expect(result.evidence).toBe('nobody owns this deal');
+  });
+
+  it('should fall back to the owner when the workspace has no ae field', () => {
+    const result = resultOf(
+      'new_to_screening',
+      snapshotOf({}, { ownerId: 'member-1' }),
+      id,
+    );
+
+    expect(result.status).toBe('met');
+    expect(result.evidence).toBe('the deal has an owner');
+  });
 });
 
 /* -------------------------------------------------------------------------- */

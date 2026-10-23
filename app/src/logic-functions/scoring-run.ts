@@ -572,6 +572,17 @@ export const loadConfigRecord = async (
  * work for" is a rule worth 10 points. One extra read buys it. If the read
  * fails for any reason the lead is scored without it, because a lead scored
  * slightly low is recoverable and a lead not scored at all is not.
+ *
+ * The company selection must stay in lockstep with `backfillPersonSelection`'s
+ * `company` entry: a record scored here and the same record scored by the
+ * backfill must see the same fields, or the same lead scores differently
+ * depending on which path touched it. `industry`, `country` and `employeeCount`
+ * are the firmographics the ICP rules and the exclusion gate read through the
+ * `company.*` field-mapping candidates — a Twenty workspace keeps them on
+ * Company, so without them in the selection those rules can never see values
+ * the record actually holds. On a schema without the columns the selection
+ * degrades exactly as `id`/`name` would: Twenty does not validate selection
+ * sets, and the absent columns come back `null`.
  */
 const hydrateCompany = async (
   client: GreenlightApiClient,
@@ -591,7 +602,15 @@ const hydrateCompany = async (
     const response = await client.query({
       companies: {
         __args: { filter: { id: { eq: companyId } } },
-        edges: { node: { id: true, name: true } },
+        edges: {
+          node: {
+            id: true,
+            name: true,
+            industry: true,
+            country: true,
+            employeeCount: true,
+          },
+        },
       },
     });
 
