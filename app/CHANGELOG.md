@@ -2,6 +2,29 @@
 
 All notable changes to this application are documented in this file.
 
+## 0.2.6
+
+- **Fixed: the sales-team relations now declare their reciprocal fields, so the install can
+  complete.** 0.2.5 was the first release with RELATION fields, and it shipped only the
+  MANY_TO_ONE halves: six relations named their inverse ONE_TO_MANY field by uuid, and no such
+  field was declared anywhere in the manifest — not on the app objects and not as a top-level
+  field on the core `workspaceMember` object. The package published clean because the local build
+  does not validate reciprocals; the server's metadata sync does (v2.29,
+  `validateMorphOrRelationFlatFieldMetadata`), and `installApplication` failed with
+  `METADATA_VALIDATION_FAILED` / `FIELD_METADATA_NOT_FOUND` on all six, leaving the workspace
+  half-upgraded — application row at 0.2.5, object metadata still at 0.2.4, which is why the
+  scoring upgrade landed but no sales-team object appeared.
+- The six reciprocals use the uuids pinned in `src/constants/sales-team-identifiers.ts` since the
+  feature was designed (they were always meant to exist; only the declarations were missing):
+  `workspaceMemberStaff` and `authorNotes` on `workspaceMember` as top-level fields in
+  `src/fields/`, and `managerReports`, `staffAvailability`, `staffNotes` and `staffContracts`
+  inline on `greenlightSalesStaff`. A relation is two fields that name each other; now it is.
+- Added `relation-reciprocals.test.ts`: every relation declared anywhere in the app must resolve
+  its reciprocal, be named back, sit on the object it is pointed at from, and face the opposite
+  relation type. This is the server's check, run before publish instead of during install, and it
+  discovers its inputs the way `identifier-uniqueness.test.ts` does — a new object or field file
+  is covered by existing.
+
 ## 0.2.4
 
 - **A licence pathway in the UI.** A new "Greenlight licence and enrichment" command opens a panel

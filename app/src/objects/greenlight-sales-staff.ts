@@ -10,6 +10,15 @@ import {
   SALES_STAFF_FIELD_UNIVERSAL_IDENTIFIERS,
   SALES_STAFF_INVERSE_FIELD_UNIVERSAL_IDENTIFIERS,
   SALES_STAFF_OBJECT_UNIVERSAL_IDENTIFIER,
+  STAFF_AVAILABILITY_FIELD_UNIVERSAL_IDENTIFIERS,
+  STAFF_AVAILABILITY_INVERSE_FIELD_UNIVERSAL_IDENTIFIER,
+  STAFF_AVAILABILITY_OBJECT_UNIVERSAL_IDENTIFIER,
+  STAFF_CONTRACT_FIELD_UNIVERSAL_IDENTIFIERS,
+  STAFF_CONTRACT_INVERSE_FIELD_UNIVERSAL_IDENTIFIER,
+  STAFF_CONTRACT_OBJECT_UNIVERSAL_IDENTIFIER,
+  STAFF_NOTE_FIELD_UNIVERSAL_IDENTIFIERS,
+  STAFF_NOTE_INVERSE_FIELD_UNIVERSAL_IDENTIFIERS,
+  STAFF_NOTE_OBJECT_UNIVERSAL_IDENTIFIER,
 } from 'src/constants/sales-team-identifiers';
 
 /**
@@ -361,6 +370,91 @@ export default defineObject({
         'The switch to flip when somebody is swamped, without editing their capacity or their status.',
       icon: 'IconInbox',
       defaultValue: true,
+    },
+
+    /* ---------------------------------------------------------------- */
+    /* Inverse relation fields — the sides this object is looked at from */
+    /* ---------------------------------------------------------------- */
+
+    /**
+     * Every MANY_TO_ONE above names its reciprocal by uuid in
+     * `relationTargetFieldMetadataUniversalIdentifier`. Twenty creates no
+     * reciprocal by implication: each one must also be declared — on this
+     * object when the "one" side is ours, or as a top-level field in
+     * `src/fields/` when it lands on a core object (`workspaceMember`). 0.2.5
+     * shipped the MANY_TO_ONE halves only, and the server's metadata sync
+     * (v2.29, `validateMorphOrRelationFlatFieldMetadata`) rejected all six with
+     * `FIELD_METADATA_NOT_FOUND`, leaving the workspace half-upgraded. These
+     * four, plus the two workspaceMember fields in `src/fields/`, are the
+     * reciprocals; their uuids were pinned in sales-team-identifiers.ts from
+     * the start and must never be re-minted.
+     *
+     * ONE_TO_MANY is the inverse side: no foreign key, so no `onDelete` and no
+     * `joinColumnName` — those live on the MANY_TO_ONE that owns the column.
+     */
+    {
+      universalIdentifier:
+        SALES_STAFF_INVERSE_FIELD_UNIVERSAL_IDENTIFIERS.managerReports,
+      type: FieldType.RELATION,
+      name: 'managerReports',
+      label: 'Reports',
+      description: 'The team members who report to this one.',
+      icon: 'IconUsers',
+      relationTargetObjectMetadataUniversalIdentifier:
+        SALES_STAFF_OBJECT_UNIVERSAL_IDENTIFIER,
+      relationTargetFieldMetadataUniversalIdentifier:
+        SALES_STAFF_FIELD_UNIVERSAL_IDENTIFIERS.manager,
+      universalSettings: {
+        relationType: RelationType.ONE_TO_MANY,
+      },
+    },
+    {
+      universalIdentifier: STAFF_AVAILABILITY_INVERSE_FIELD_UNIVERSAL_IDENTIFIER,
+      type: FieldType.RELATION,
+      name: 'staffAvailability',
+      label: 'Availability',
+      description:
+        'This person’s dated exceptions to their normal working pattern — leave, training, reduced hours, extra cover.',
+      icon: 'IconCalendarTime',
+      relationTargetObjectMetadataUniversalIdentifier:
+        STAFF_AVAILABILITY_OBJECT_UNIVERSAL_IDENTIFIER,
+      relationTargetFieldMetadataUniversalIdentifier:
+        STAFF_AVAILABILITY_FIELD_UNIVERSAL_IDENTIFIERS.staff,
+      universalSettings: {
+        relationType: RelationType.ONE_TO_MANY,
+      },
+    },
+    {
+      universalIdentifier:
+        STAFF_NOTE_INVERSE_FIELD_UNIVERSAL_IDENTIFIERS.staffNotes,
+      type: FieldType.RELATION,
+      name: 'staffNotes',
+      label: 'Team notes',
+      description: 'Operational notes about this team member.',
+      icon: 'IconNotes',
+      relationTargetObjectMetadataUniversalIdentifier:
+        STAFF_NOTE_OBJECT_UNIVERSAL_IDENTIFIER,
+      relationTargetFieldMetadataUniversalIdentifier:
+        STAFF_NOTE_FIELD_UNIVERSAL_IDENTIFIERS.staff,
+      universalSettings: {
+        relationType: RelationType.ONE_TO_MANY,
+      },
+    },
+    {
+      universalIdentifier: STAFF_CONTRACT_INVERSE_FIELD_UNIVERSAL_IDENTIFIER,
+      type: FieldType.RELATION,
+      name: 'staffContracts',
+      label: 'Contracts',
+      description:
+        'The agreed terms this person has worked to, newest active first. Amend by superseding, never by editing.',
+      icon: 'IconFileDescription',
+      relationTargetObjectMetadataUniversalIdentifier:
+        STAFF_CONTRACT_OBJECT_UNIVERSAL_IDENTIFIER,
+      relationTargetFieldMetadataUniversalIdentifier:
+        STAFF_CONTRACT_FIELD_UNIVERSAL_IDENTIFIERS.staff,
+      universalSettings: {
+        relationType: RelationType.ONE_TO_MANY,
+      },
     },
   ],
 });
